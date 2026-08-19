@@ -99,13 +99,15 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
                 UpdateMeta();
             }),
             () => _manager.State is ServerState.Running);
-        OpenBrowserCommand = new RelayCommand(OpenBrowser, () => _url is not null);
+        // 只要 DSH 在运行即可打开/复制 URL（不依赖就绪行是否已解析，修复自动打开后按钮置灰的问题）
+        OpenBrowserCommand = new RelayCommand(OpenBrowser, () => _manager.State is ServerState.Running);
         CopyUrlCommand = new RelayCommand(() =>
         {
-            if (_url is null) return;
-            Clipboard.SetText(_url);
+            var target = ResolveUrl();
+            if (string.IsNullOrEmpty(target)) return;
+            Clipboard.SetText(target);
             ShowMessage("URL 已复制到剪贴板。");
-        }, () => _url is not null);
+        }, () => _manager.State is ServerState.Running);
 
         SaveSettingsCommand = new RelayCommand(SaveSettings);
         ResetSettingsCommand = new RelayCommand(ResetSettings);
@@ -280,16 +282,23 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private void OpenBrowser()
     {
-        if (_url is null) return;
+        var target = ResolveUrl();
+        if (string.IsNullOrEmpty(target)) return;
         try
         {
-            BrowserOpener.Open(_url);
+            // 已打开则切换标签页，否则默认浏览器新开
+            BrowserOpener.OpenOrFocus(target);
         }
         catch (Exception ex)
         {
             ShowMessage(ex.Message, isError: true);
         }
     }
+
+    /// <summary>
+    /// 当前可访问 URL：优先用就绪行解析到的 URL，否则按配置的 host:port 构造（Running 时恒有值）。
+    /// </summary>
+    private string ResolveUrl() => _url ?? $"http://{_settings.Current.Host}:{_settings.Current.Port}";
 
     private void SaveSettings()
     {
