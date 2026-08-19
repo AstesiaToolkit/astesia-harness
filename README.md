@@ -71,6 +71,19 @@ AstesiaHarness/
 └─ Assets/app.ico                  # 主图标
 ```
 
+## 发布新版本（GitHub Actions 自动发布）
+
+推送格式为 `v*` 的版本 tag 即自动触发 CI，构建单文件 exe 并发布 GitHub Release：
+
+```powershell
+git tag v0.1.1
+git push origin v0.1.1
+```
+
+- Workflow：`.github/workflows/release.yml`（构建自包含单文件 exe + SHA256 校验和 → `gh release create`）；
+- 产物下载：https://github.com/AstesiaToolkit/astesia-harness/releases （`AstesiaHarness.exe` 双击即用，无需安装 .NET）；
+- 版本号取自 tag（如 `v0.1.1` → 程序集版本 `0.1.1`）。
+
 ## 数据位置
 
 - 设置：`%APPDATA%\AstesiaHarness\settings.json`
