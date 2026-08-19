@@ -1,4 +1,7 @@
 # 推送版本 tag（如 v0.1.0）后自动构建单文件 exe 并发布 GitHub Release。
+# 发布两个附件：
+#   - AstesiaHarness.exe              框架依赖单文件（~1.3 MB，需 .NET 8 Desktop Runtime）
+#   - AstesiaHarness-SelfContained.exe 自包含单文件（~60 MB，免依赖）
 name: Release
 
 on:
@@ -22,26 +25,43 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
-      - name: Publish single-file exe
+      - name: Publish single-file exes
         shell: pwsh
         run: |
           $version = $env:GITHUB_REF_NAME.TrimStart('v')
-          Write-Host "Publishing AstesiaHarness $version (self-contained single-file, win-x64)"
+          Write-Host "Publishing AstesiaHarness $version"
+
+          # 1) 框架依赖单文件（默认推荐，体积最小）
           dotnet publish AstesiaHarness.csproj -c Release -r win-x64 `
-            --self-contained true `
+            --self-contained false `
             -p:PublishSingleFile=true `
             -p:DebugType=None `
             -p:DebugSymbols=false `
             -p:Version=$version `
-            -o publish
-          Get-ChildItem publish | Select-Object Name, Length
+            -o publish-fdd
 
-      - name: Generate SHA256 checksum
-        shell: pwsh
-        run: |
-          $hash = (Get-FileHash publish\AstesiaHarness.exe -Algorithm SHA256).Hash
-          "SHA256 $hash  AstesiaHarness.exe" | Set-Content publish\AstesiaHarness.exe.sha256
-          Get-Content publish\AstesiaHarness.exe.sha256
+          # 2) 自包含单文件（免依赖）：开启单文件压缩 + 去 ICU + 仅中英语言包
+          dotnet publish AstesiaHarness.csproj -c Release -r win-x64 `
+            --self-contained true `
+            -p:PublishSingleFile=true `
+            -p:EnableCompressionInSingleFile=true `
+            -p:SatelliteResourceLanguages=zh-Hans%3Ben `
+            -p:InvariantGlobalization=true `
+            -p:DebugType=None `
+            -p:DebugSymbols=false `
+            -p:Version=$version `
+            -o publish-scd
+
+          New-Item -ItemType Directory publish -Force | Out-Null
+          Copy-Item publish-fdd\AstesiaHarness.exe publish\AstesiaHarness.exe
+          Copy-Item publish-scd\AstesiaHarness.exe publish\AstesiaHarness-SelfContained.exe
+
+          # 3) SHA256 校验和
+          Get-ChildItem publish\*.exe | ForEach-Object {
+            $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash
+            "SHA256 $hash  $($_.Name)" | Set-Content "$($_.FullName).sha256"
+          }
+          Get-ChildItem publish | Select-Object Name, Length
 
       - name: Create GitHub Release
         shell: pwsh
@@ -51,10 +71,13 @@ jobs:
           $notes = @"
           AstesiaHarness $env:GITHUB_REF_NAME 自动构建版。
 
+          ## 下载哪个？
+          - **AstesiaHarness.exe**（约 1.3 MB）：默认推荐，需安装 .NET 8 Desktop Runtime（https://dotnet.microsoft.com/download/dotnet/8.0/runtime）
+          - **AstesiaHarness-SelfContained.exe**（约 60 MB）：免依赖版，Windows 10/11 x64 双击即用
+
           ## 使用
-          - 下载 **AstesiaHarness.exe** 双击即可运行（自包含单文件，无需安装 .NET 运行时）。
-          - 首次使用请到「设置」页确认 DSH 仓库路径与端口。
-          - 完整性校验见 AstesiaHarness.exe.sha256。
+          - 首次使用请到「设置」页确认 DSH 仓库路径与端口；
+          - 完整性校验见同名 .sha256 文件。
 
           ## 源码
           - https://github.com/AstesiaToolkit/astesia-harness
@@ -63,5 +86,7 @@ jobs:
           gh release create $env:GITHUB_REF_NAME `
             publish\AstesiaHarness.exe `
             publish\AstesiaHarness.exe.sha256 `
+            publish\AstesiaHarness-SelfContained.exe `
+            publish\AstesiaHarness-SelfContained.exe.sha256 `
             --title "AstesiaHarness $env:GITHUB_REF_NAME" `
             --notes $notes

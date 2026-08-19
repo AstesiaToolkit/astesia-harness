@@ -80,9 +80,13 @@ git tag v0.1.1
 git push origin v0.1.1
 ```
 
-- Workflow：`.github/workflows/release.yml`（构建自包含单文件 exe + SHA256 校验和 → `gh release create`）；
-- 产物下载：https://github.com/AstesiaToolkit/astesia-harness/releases （`AstesiaHarness.exe` 双击即用，无需安装 .NET）；
+- Workflow：`.github/workflows/release.yml`（构建单文件 exe + SHA256 校验和 → `gh release create`）；
+- 产物下载：https://github.com/AstesiaToolkit/astesia-harness/releases ，每次发布两个附件：
+  - `AstesiaHarness.exe`（约 1.3 MB）—— 框架依赖，需 .NET 8 Desktop Runtime（[下载运行时](https://dotnet.microsoft.com/download/dotnet/8.0/runtime)）；
+  - `AstesiaHarness-SelfContained.exe`（约 60 MB）—— 自包含免依赖，Windows 10/11 x64 双击即用；
 - 版本号取自 tag（如 `v0.1.1` → 程序集版本 `0.1.1`）。
+
+> 体积说明：自包含版捆绑了整个 .NET 运行时所以偏大；已通过开启单文件压缩、去除 ICU 全球化数据、裁剪非中英语言包从 147 MB 优化到约 60 MB。若目标机可安装运行时，请优先使用 1.3 MB 的框架依赖版。
 
 ## 数据位置
 
