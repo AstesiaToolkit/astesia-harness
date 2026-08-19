@@ -48,19 +48,20 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          $notes = @"
+          AstesiaHarness $env:GITHUB_REF_NAME 自动构建版。
+
+          ## 使用
+          - 下载 **AstesiaHarness.exe** 双击即可运行（自包含单文件，无需安装 .NET 运行时）。
+          - 首次使用请到「设置」页确认 DSH 仓库路径与端口。
+          - 完整性校验见 AstesiaHarness.exe.sha256。
+
+          ## 源码
+          - https://github.com/AstesiaToolkit/astesia-harness
+          - 文档：docs/（需求分析、架构设计、UI 规格）
+          "@
           gh release create $env:GITHUB_REF_NAME `
             publish\AstesiaHarness.exe `
             publish\AstesiaHarness.exe.sha256 `
             --title "AstesiaHarness $env:GITHUB_REF_NAME" `
-            --notes @"
-DeepSeek Harness Web GUI 快速启动器自动构建版。
-
-## 使用
-- 下载 **AstesiaHarness.exe**，双击即可运行（自包含单文件，无需安装 .NET 运行时）；
-- 首次使用请到「设置」页确认 DSH 仓库路径与端口；
-- 校验完整性可用同目录 `AstesiaHarness.exe.sha256`。
-
-## 源码
-- 仓库：https://github.com/AstesiaToolkit/astesia-harness
-- 文档：docs/（需求分析、架构设计、UI 规格）
-"@
+            --notes $notes
