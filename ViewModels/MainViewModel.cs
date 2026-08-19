@@ -280,14 +280,14 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         }
     }
 
-    private void OpenBrowser()
+    private async void OpenBrowser()
     {
         var target = ResolveUrl();
         if (string.IsNullOrEmpty(target)) return;
         try
         {
-            // 已打开则切换标签页，否则默认浏览器新开
-            BrowserOpener.OpenOrFocus(target);
+            // UIA 探测（含最小化窗口恢复等待）放后台线程，避免阻塞 UI
+            await Task.Run(() => BrowserOpener.OpenOrFocus(target));
         }
         catch (Exception ex)
         {

@@ -16,6 +16,10 @@ public static class BrowserOpener
     private const string DefaultTitleMarker = "DeepSeek Harness";
 
     private const int SW_RESTORE = 9;
+    private const int SW_MINIMIZE = 6;
+
+    /// <summary>最小化窗口恢复后，等待 Chromium 重建辅助功能树的时间。</summary>
+    private const int MinimizedRebuildDelayMs = 300;
 
     /// <summary>
     /// 打开 URL：优先切换已打开的 Chromium 标签页；找不到则回退默认浏览器新开。
@@ -53,6 +57,8 @@ public static class BrowserOpener
     {
         var hostPort = ExtractHostPort(url);
 
+        // 收集候选窗口（非最小化优先，避免无谓的恢复动作）。
+        var windows = new List<(Process Proc, IntPtr Handle, bool Minimized)>();
         foreach (var name in ChromiumProcessNames)
         {
             Process[] processes;
@@ -61,13 +67,44 @@ public static class BrowserOpener
 
             foreach (var proc in processes)
             {
-                AutomationElement? root = null;
                 try
                 {
                     if (proc.MainWindowHandle == IntPtr.Zero) continue;
-                    root = AutomationElement.FromHandle(proc.MainWindowHandle);
-                    if (root is null) continue;
+                    windows.Add((proc, proc.MainWindowHandle, IsIconic(proc.MainWindowHandle)));
+                }
+                catch (Exception)
+                {
+                    proc.Dispose();
+                }
+            }
+        }
+        windows.Sort((a, b) => a.Minimized.CompareTo(b.Minimized));
 
+        foreach (var (proc, handle, wasMinimized) in windows)
+        {
+            try
+            {
+                // 快速路径：窗口标题已含目标页面（激活标签即目标页）→ 直接恢复并前置，无需 UIA。
+                // 也覆盖"窗口最小化但激活标签正是目标页"的场景。
+                if (IsMatch(proc.MainWindowTitle, hostPort, titleMarker))
+                {
+                    BringToFront(handle);
+                    return true;
+                }
+
+                // 最小化窗口：Chromium 会挂起辅助功能树（实证：最小化时 UIA 扫不到标签），
+                // 先恢复窗口并等待其重建辅助功能树，再扫描。
+                var restored = false;
+                if (wasMinimized)
+                {
+                    ShowWindow(handle, SW_RESTORE);
+                    restored = true;
+                    Thread.Sleep(MinimizedRebuildDelayMs);
+                }
+
+                var root = AutomationElement.FromHandle(handle);
+                if (root is not null)
+                {
                     // 候选 1：标签栏（Tab 控件）的直接子 TabItem —— 最精准。
                     var tabControl = root.FindFirst(TreeScope.Descendants,
                         new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Tab));
@@ -75,25 +112,35 @@ public static class BrowserOpener
                     {
                         var tabs = tabControl.FindAll(TreeScope.Children,
                             new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.TabItem));
-                        if (TrySelectMatchingTab(tabs, proc.MainWindowHandle, hostPort, titleMarker)) return true;
+                        if (TrySelectMatchingTab(tabs, handle, hostPort, titleMarker)) return true;
                     }
 
                     // 候选 2：窗口内全部 TabItem，按标题/地址过滤（覆盖标签栏未暴露为 Tab 控件的情况）。
                     var allTabs = root.FindAll(TreeScope.Descendants,
                         new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.TabItem));
-                    if (TrySelectMatchingTab(allTabs, proc.MainWindowHandle, hostPort, titleMarker)) return true;
+                    if (TrySelectMatchingTab(allTabs, handle, hostPort, titleMarker)) return true;
                 }
-                catch (Exception)
-                {
-                    // 单个窗口探测失败，继续下一个
-                }
-                finally
-                {
-                    proc.Dispose();
-                }
+
+                // 未命中且窗口是我们恢复的 → 还原最小化，不打扰用户。
+                if (restored) ShowWindow(handle, SW_MINIMIZE);
+            }
+            catch (Exception)
+            {
+                // 单个窗口探测失败，继续下一个
+            }
+            finally
+            {
+                proc.Dispose();
             }
         }
         return false;
+    }
+
+    private static bool IsMatch(string? text, string hostPort, string titleMarker)
+    {
+        if (string.IsNullOrEmpty(text)) return false;
+        return text.Contains(titleMarker, StringComparison.OrdinalIgnoreCase)
+            || (hostPort.Length > 0 && text.Contains(hostPort, StringComparison.OrdinalIgnoreCase));
     }
 
     private static bool TrySelectMatchingTab(
@@ -102,9 +149,7 @@ public static class BrowserOpener
         foreach (AutomationElement tab in tabs)
         {
             var text = tab.Current.Name ?? string.Empty;
-            var matches = text.Contains(titleMarker, StringComparison.OrdinalIgnoreCase)
-                || (hostPort.Length > 0 && text.Contains(hostPort, StringComparison.OrdinalIgnoreCase));
-            if (!matches) continue;
+            if (!IsMatch(text, hostPort, titleMarker)) continue;
 
             if (tab.TryGetCurrentPattern(SelectionItemPattern.Pattern, out var pattern)
                 && pattern is SelectionItemPattern selection)
