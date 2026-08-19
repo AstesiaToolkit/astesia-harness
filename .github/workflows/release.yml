@@ -1,0 +1,66 @@
+# 推送版本 tag（如 v0.1.0）后自动构建单文件 exe 并发布 GitHub Release。
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write # 创建 Release 需要
+
+jobs:
+  publish:
+    name: Build & Publish Release
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Publish single-file exe
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          Write-Host "Publishing AstesiaHarness $version (self-contained single-file, win-x64)"
+          dotnet publish AstesiaHarness.csproj -c Release -r win-x64 `
+            --self-contained true `
+            -p:PublishSingleFile=true `
+            -p:DebugType=None `
+            -p:DebugSymbols=false `
+            -p:Version=$version `
+            -o publish
+          Get-ChildItem publish | Select-Object Name, Length
+
+      - name: Generate SHA256 checksum
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash publish\AstesiaHarness.exe -Algorithm SHA256).Hash
+          "SHA256 $hash  AstesiaHarness.exe" | Set-Content publish\AstesiaHarness.exe.sha256
+          Get-Content publish\AstesiaHarness.exe.sha256
+
+      - name: Create GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create $env:GITHUB_REF_NAME `
+            publish\AstesiaHarness.exe `
+            publish\AstesiaHarness.exe.sha256 `
+            --title "AstesiaHarness $env:GITHUB_REF_NAME" `
+            --notes @"
+DeepSeek Harness Web GUI 快速启动器自动构建版。
+
+## 使用
+- 下载 **AstesiaHarness.exe**，双击即可运行（自包含单文件，无需安装 .NET 运行时）；
+- 首次使用请到「设置」页确认 DSH 仓库路径与端口；
+- 校验完整性可用同目录 `AstesiaHarness.exe.sha256`。
+
+## 源码
+- 仓库：https://github.com/AstesiaToolkit/astesia-harness
+- 文档：docs/（需求分析、架构设计、UI 规格）
+"@

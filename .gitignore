@@ -1,0 +1,23 @@
+# ── .NET 构建产物 ─────────────────────────────────────────
+bin/
+obj/
+publish/
+publish-test/
+
+# ── IDE / 用户文件 ────────────────────────────────────────
+.vs/
+.vscode/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+.idea/
+
+# ── 日志与临时文件 ────────────────────────────────────────
+*.log
+*.tmp
+Thumbs.db
+Desktop.ini
+
+# ── 应用运行时数据（不入库） ──────────────────────────────
+%APPDATA%/AstesiaHarness/
