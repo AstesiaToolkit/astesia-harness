@@ -4,22 +4,119 @@
         Title="AstesiaHarness — DeepSeek Harness 快速启动器"
         Width="780" Height="600" MinWidth="660" MinHeight="440"
         WindowStartupLocation="CenterScreen"
+        WindowStyle="None"
+        ResizeMode="CanResize"
+        Background="#FFFFFF"
         Icon="pack://application:,,,/Assets/app.ico">
+    <WindowChrome.WindowChrome>
+        <WindowChrome CaptionHeight="34"
+                      ResizeBorderThickness="6"
+                      GlassFrameThickness="0"
+                      CornerRadius="0"
+                      UseAeroCaptionButtons="False" />
+    </WindowChrome.WindowChrome>
+
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVis" />
+
+        <!-- 标题栏窗口按钮 -->
+        <Style x:Key="TitleBarButton" TargetType="Button">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Foreground" Value="#D8DEE6" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Width" Value="46" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="WindowChrome.IsHitTestVisibleInChrome" Value="True" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#3A4A5E" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#2E3B4C" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="CloseTitleBarButton" TargetType="Button" BasedOn="{StaticResource TitleBarButton}">
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#E81123" />
+                    <Setter Property="Foreground" Value="White" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- 更新徽标（有更新时绿色高亮，可点击） -->
+        <Style x:Key="UpdateBadgeStyle" TargetType="Button">
+            <Setter Property="Background" Value="#1B5E20" />
+            <Setter Property="Foreground" Value="White" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Padding" Value="8,2" />
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="WindowChrome.IsHitTestVisibleInChrome" Value="True" />
+            <Setter Property="ToolTip" Value="发现新版本，点击更新" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}" CornerRadius="10"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#2E7D32" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#0E3A12" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </Window.Resources>
 
-    <Grid Margin="12">
+    <Grid>
         <Grid.RowDefinitions>
+            <RowDefinition Height="34" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
+        <!-- ── 自定义标题栏（T5：版本显示 + 更新徽标） ───────────── -->
+        <Grid Grid.Row="0" Background="#263445">
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0,0,0">
+                <TextBlock Text="AstesiaHarness" Foreground="White" FontWeight="SemiBold" VerticalAlignment="Center" />
+                <TextBlock Text="{Binding CurrentVersionText}" Foreground="#8FA6BF" FontSize="11"
+                           Margin="8,1,0,0" VerticalAlignment="Center" />
+                <Button Command="{Binding UpdateNowCommand}"
+                        Visibility="{Binding UpdateAvailable, Converter={StaticResource BoolToVis}}"
+                        Style="{StaticResource UpdateBadgeStyle}"
+                        Content="{Binding UpdateBadgeText}"
+                        Margin="12,0,0,0" />
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Stretch">
+                <Button x:Name="MinButton" Content="&#x2013;" Style="{StaticResource TitleBarButton}" Click="OnMinimizeButton" />
+                <Button x:Name="MaxButton" Content="&#x25A1;" Style="{StaticResource TitleBarButton}" Click="OnMaximizeRestoreButton" />
+                <Button x:Name="CloseButton" Content="&#x2715;" Style="{StaticResource CloseTitleBarButton}" Click="OnCloseButton" />
+            </StackPanel>
+        </Grid>
+
         <!-- ── 状态条 ─────────────────────────────────────────────── -->
-        <Border Grid.Row="0" Background="#F7F7F7" BorderBrush="#DDDDDD" BorderThickness="1"
-                CornerRadius="4" Padding="10,8">
+        <Border Grid.Row="1" Background="#F7F7F7" BorderBrush="#DDDDDD" BorderThickness="1"
+                CornerRadius="4" Padding="10,8" Margin="12,10,12,0">
             <StackPanel>
                 <StackPanel Orientation="Horizontal">
                     <Ellipse Width="12" Height="12" Fill="{Binding StateBrush}" VerticalAlignment="Center" Margin="0,0,6,0" />
@@ -39,7 +136,7 @@
         </Border>
 
         <!-- ── 操作按钮 ───────────────────────────────────────────── -->
-        <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,10,0,0">
+        <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="12,10,12,0">
             <Button Content="▶ 启动" Command="{Binding StartCommand}" Padding="14,4" Margin="0,0,8,0" />
             <Button Content="■ 停止" Command="{Binding StopCommand}" Padding="14,4" Margin="0,0,8,0" />
             <Button Content="↻ 重启" Command="{Binding RestartCommand}" Padding="14,4" Margin="0,0,8,0" />
@@ -47,7 +144,7 @@
         </StackPanel>
 
         <!-- ── Tab：运行 / 设置 ───────────────────────────────────── -->
-        <TabControl Grid.Row="2" Margin="0,10,0,0">
+        <TabControl Grid.Row="3" Margin="12,10,12,0">
             <!-- 运行 -->
             <TabItem Header="运行">
                 <Grid>
@@ -115,7 +212,20 @@
                                      Margin="6,2,0,2" />
                         <CheckBox Content="退出时提示（每次点 × 询问）" IsChecked="{Binding PromptOnClose}" Margin="6,2,0,10" />
 
+                        <TextBlock Text="打开软件时" FontWeight="SemiBold" Margin="0,2,0,2" />
+                        <CheckBox Content="打开软件时同时启动 dsh" IsChecked="{Binding AutoStartServerOnLaunch}" Margin="0,2,0,4" />
                         <CheckBox Content="开机自启（以 --minimized 启动到托盘）" IsChecked="{Binding StartWithWindows}" Margin="0,2,0,14" />
+
+                        <TextBlock Text="版本与更新" FontWeight="SemiBold" Margin="0,2,0,4" />
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                            <TextBlock Text="当前版本：" VerticalAlignment="Center" />
+                            <TextBlock Text="{Binding CurrentVersionText}" FontWeight="SemiBold" VerticalAlignment="Center" />
+                        </StackPanel>
+                        <CheckBox Content="启动时自动检查更新" IsChecked="{Binding AutoCheckUpdate}" Margin="0,2,0,4" />
+                        <StackPanel Orientation="Horizontal" Margin="0,4,0,10">
+                            <Button Content="检查更新" Command="{Binding CheckUpdateCommand}" Padding="10,2" Margin="0,0,10,0" />
+                            <TextBlock Text="{Binding UpdateStatusText}" VerticalAlignment="Center" Foreground="#555" FontSize="12" />
+                        </StackPanel>
 
                         <StackPanel Orientation="Horizontal">
                             <Button Content="保存设置" Command="{Binding SaveSettingsCommand}" Padding="14,4" Margin="0,0,8,0" />
@@ -128,7 +238,7 @@
         </TabControl>
 
         <!-- ── 消息条（T3：支持指引链接） ─────────────────────────── -->
-        <Border Grid.Row="3" Margin="0,8,0,0" Padding="8,5" CornerRadius="3"
+        <Border Grid.Row="4" Margin="12,8,12,12" Padding="8,5" CornerRadius="3"
                 Background="#FDF6EC" BorderBrush="#EADFC8" BorderThickness="1">
             <TextBlock TextWrapping="Wrap" FontSize="12">
                 <Run Text="{Binding MessageText, Mode=OneWay}" Foreground="{Binding MessageBrush}" />

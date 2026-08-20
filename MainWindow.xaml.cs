@@ -13,7 +13,24 @@ public partial class MainWindow : Window
         InitializeComponent();
         DataContextChanged += OnDataContextChanged;
         Closing += OnWindowClosing;
+        StateChanged += OnWindowStateChanged;
+        // 任务栏/Alt+Tab 标题带版本号
+        Title = $"AstesiaHarness v{AstesiaHarness.Services.UpdateService.CurrentVersion} — DeepSeek Harness 快速启动器";
     }
+
+    private void OnWindowStateChanged(object? sender, EventArgs e)
+    {
+        MaxButton.Content = WindowState == WindowState.Maximized ? "\u2750" : "\u25A1";
+    }
+
+    private void OnMinimizeButton(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
+
+    private void OnMaximizeRestoreButton(object sender, RoutedEventArgs e)
+    {
+        WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
+    }
+
+    private void OnCloseButton(object sender, RoutedEventArgs e) => Close();
 
     private void OnDataContextChanged(object sender, DependencyPropertyChangedEventArgs e)
     {

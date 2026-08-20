@@ -15,6 +15,7 @@ public partial class App : Application
     private const string ActivateEventName = "AstesiaHarness.Activate";
 
     private Mutex? _mutex;
+    private bool _ownsMutex;
     private EventWaitHandle? _activateHandle;
     private Thread? _activateThread;
 
@@ -35,6 +36,7 @@ public partial class App : Application
 
         // ── 单实例守卫 ──────────────────────────────────────────────
         _mutex = new Mutex(initiallyOwned: true, MutexName, out bool createdNew);
+        _ownsMutex = createdNew;
         if (!createdNew)
         {
             // 已有实例在跑：通知它把窗口带到前台，然后本实例退出。
@@ -71,14 +73,31 @@ public partial class App : Application
             // 开机自启：托盘常驻，主窗口隐藏，待用户点击托盘唤起。
             Tray.ShowBalloon("AstesiaHarness 已启动", "DeepSeek Harness 快速启动器正在托盘运行，点击图标打开主窗口。");
         }
+
+        // T6：打开软件时同时启动 dsh（异步，失败走 Failed 状态与指引提示）
+        if (settingsStore.Current.AutoStartServerOnLaunch)
+        {
+            MainViewModel.RequestStart();
+        }
+
+        // T4：启动时自动检查更新（静默，发现新版本仅提示并点亮标题栏徽标）
+        if (settingsStore.Current.AutoCheckUpdate)
+        {
+            _ = MainViewModel.CheckForUpdatesAsync(manual: false);
+        }
     }
 
     protected override void OnExit(ExitEventArgs e)
     {
         _activateHandle?.Set(); // 唤醒监听线程使其退出
         _activateHandle?.Dispose();
-        _mutex?.ReleaseMutex();
-        _mutex?.Dispose();
+        // 仅在持有所有权时释放（二次实例未取得所有权，直接释放会抛异常导致退出崩溃）
+        if (_ownsMutex && _mutex is not null)
+        {
+            try { _mutex.ReleaseMutex(); }
+            catch (ApplicationException) { }
+            _mutex.Dispose();
+        }
         Tray?.Dispose();
         MainViewModel?.Dispose();
         base.OnExit(e);

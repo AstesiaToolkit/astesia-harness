@@ -11,13 +11,18 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
-    <Version>0.2.0</Version>
+    <Version>0.3.0</Version>
     <Product>AstesiaHarness</Product>
     <Description>DeepSeek Harness Web GUI 快速启动器</Description>
   </PropertyGroup>
 
   <ItemGroup>
     <Resource Include="Assets\app.ico" />
+  </ItemGroup>
+
+  <!-- T4 自动更新：发布时由 workflow 传入 -p:UpdateAsset=…（FDD/SCD 各自资产名），运行时读取以选择下载对应资产 -->
+  <ItemGroup Condition="'$(UpdateAsset)' != ''">
+    <AssemblyMetadata Include="UpdateAsset" Value="$(UpdateAsset)" />
   </ItemGroup>
 
 </Project>

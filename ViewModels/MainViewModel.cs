@@ -49,9 +49,17 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private CloseAction _closeAction;
     private bool _promptOnClose;
     private bool _startWithWindows;
+    private bool _autoStartServerOnLaunch;
+    private bool _autoCheckUpdate;
 
     private string? _messageLinkUrl;
     private string _messageLinkText = "";
+
+    private UpdateInfo? _lastUpdateInfo;
+    private bool _updateAvailable;
+    private string _latestVersion = "";
+    private string _updateStatusText = "";
+    private bool _checkingUpdate;
 
     private static readonly Brush GrayBrush = new SolidColorBrush(Color.FromRgb(0x9E, 0x9E, 0x9E));
     private static readonly Brush OrangeBrush = new SolidColorBrush(Color.FromRgb(0xFF, 0x98, 0x00));
@@ -75,6 +83,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         _closeAction = s.CloseAction;
         _promptOnClose = s.PromptOnClose;
         _startWithWindows = s.StartWithWindows;
+        _autoStartServerOnLaunch = s.AutoStartServerOnLaunch;
+        _autoCheckUpdate = s.AutoCheckUpdate;
 
         _uptimeTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _uptimeTimer.Tick += (_, _) => UpdateMeta();
@@ -132,6 +142,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
                 ShowMessage(ex.Message, isError: true);
             }
         });
+        CheckUpdateCommand = new RelayCommand(() => RunSafely(() => CheckForUpdatesAsync(manual: true)));
+        UpdateNowCommand = new RelayCommand(() => RunSafely(UpdateNowAsync), () => _updateAvailable);
 
         // ── 服务层事件 ──────────────────────────────────────────────
         _manager.StateChanged += OnStateChanged;
@@ -216,6 +228,40 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
     public bool StartWithWindows { get => _startWithWindows; set { _startWithWindows = value; OnPropertyChanged(); } }
 
+    /// <summary>打开软件时同时启动 dsh（T6）。</summary>
+    public bool AutoStartServerOnLaunch { get => _autoStartServerOnLaunch; set { _autoStartServerOnLaunch = value; OnPropertyChanged(); } }
+
+    /// <summary>启动时自动检查更新（T4）。</summary>
+    public bool AutoCheckUpdate { get => _autoCheckUpdate; set { _autoCheckUpdate = value; OnPropertyChanged(); } }
+
+    // ── 版本与更新（T4/T5） ─────────────────────────────────────────
+
+    /// <summary>当前版本文本（如 "v0.3.0"）。</summary>
+    public string CurrentVersionText => "v" + UpdateService.CurrentVersion;
+
+    /// <summary>是否有可用更新（驱动标题栏更新徽标）。</summary>
+    public bool UpdateAvailable
+    {
+        get => _updateAvailable;
+        private set { _updateAvailable = value; OnPropertyChanged(); OnPropertyChanged(nameof(UpdateBadgeText)); }
+    }
+
+    public string LatestVersion
+    {
+        get => _latestVersion;
+        private set { _latestVersion = value; OnPropertyChanged(); OnPropertyChanged(nameof(UpdateBadgeText)); }
+    }
+
+    /// <summary>标题栏更新徽标文本（无更新时为空）。</summary>
+    public string UpdateBadgeText => _updateAvailable ? $"有更新 v{_latestVersion} ↑" : "";
+
+    /// <summary>更新状态文本（设置页显示）。</summary>
+    public string UpdateStatusText
+    {
+        get => _updateStatusText;
+        private set { _updateStatusText = value; OnPropertyChanged(); }
+    }
+
     // ── 消息条链接（T3 环境指引） ─────────────────────────────────
 
     public string? MessageLinkUrl => _messageLinkUrl;
@@ -238,6 +284,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public RelayCommand ClearLogCommand { get; }
     public RelayCommand CopyLogCommand { get; }
     public RelayCommand OpenMessageLinkCommand { get; }
+    public RelayCommand CheckUpdateCommand { get; }
+    public RelayCommand UpdateNowCommand { get; }
 
     // ── 托盘菜单入口 ────────────────────────────────────────────────
 
@@ -376,6 +424,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         s.CloseAction = _closeAction;
         s.PromptOnClose = _promptOnClose;
         s.StartWithWindows = _startWithWindows;
+        s.AutoStartServerOnLaunch = _autoStartServerOnLaunch;
+        s.AutoCheckUpdate = _autoCheckUpdate;
 
         _settings.Save();
         _portText = s.Port.ToString();
@@ -397,6 +447,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         CloseAction = s.CloseAction;
         PromptOnClose = s.PromptOnClose;
         StartWithWindows = s.StartWithWindows;
+        AutoStartServerOnLaunch = s.AutoStartServerOnLaunch;
+        AutoCheckUpdate = s.AutoCheckUpdate;
         ShowMessage("已恢复默认值（未保存，点击「保存设置」生效）。");
     }
 
@@ -478,6 +530,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         RestartCommand.RaiseCanExecuteChanged();
         OpenBrowserCommand.RaiseCanExecuteChanged();
         CopyUrlCommand.RaiseCanExecuteChanged();
+        UpdateNowCommand.RaiseCanExecuteChanged();
     }
 
     private void UpdateTrayTooltip()
@@ -503,49 +556,56 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         w.Activate();
     }
 
-    private void ExitFromTray() => BeginExit();
+    private void ExitFromTray() => ExitApplication(ResolveServiceExit());
 
-    /// <summary>
-    /// 退出程序流程：服务运行时弹确认（停止并退出 / 保持运行并退出 / 取消）。
-    /// 返回 true 表示应用继续退出（必要时已触发停止或脱离托管并调用 Shutdown）；
-    /// 返回 false 表示用户取消。
-    /// </summary>
-    private bool BeginExit()
+    /// <summary>服务运行时的退出决策。</summary>
+    private enum ExitPlan { Proceed, StopAndExit, DetachAndExit, Cancel }
+
+    /// <summary>服务运行时弹确认（停止并退出 / 保持运行并退出 / 取消）；未运行直接 Proceed。</summary>
+    private ExitPlan ResolveServiceExit()
     {
         var state = _manager.State;
-        if (state is ServerState.Starting or ServerState.Running)
+        if (state is not (ServerState.Starting or ServerState.Running)) return ExitPlan.Proceed;
+        var choice = MessageBox.Show(Window,
+            "DSH Web 服务正在运行。\n\n" +
+            "是(Y)：停止服务并退出\n" +
+            "否(N)：保持服务运行，仅退出启动器\n" +
+            "取消：返回",
+            "退出 AstesiaHarness",
+            MessageBoxButton.YesNoCancel,
+            MessageBoxImage.Question,
+            MessageBoxResult.Yes);
+        return choice switch
         {
-            var choice = MessageBox.Show(Window,
-                "DSH Web 服务正在运行。\n\n" +
-                "是(Y)：停止服务并退出\n" +
-                "否(N)：保持服务运行，仅退出启动器\n" +
-                "取消：返回",
-                "退出 AstesiaHarness",
-                MessageBoxButton.YesNoCancel,
-                MessageBoxImage.Question,
-                MessageBoxResult.Yes);
-            switch (choice)
-            {
-                case MessageBoxResult.Yes:
-                    IsExiting = true;
-                    RunSafely(async () =>
-                    {
-                        await _manager.StopAsync();
-                        Application.Current.Shutdown();
-                    });
-                    return true;
-                case MessageBoxResult.No:
-                    _manager.DetachAndRelease();
-                    IsExiting = true;
-                    Application.Current.Shutdown();
-                    return true;
-                default:
-                    return false;
-            }
+            MessageBoxResult.Yes => ExitPlan.StopAndExit,
+            MessageBoxResult.No => ExitPlan.DetachAndExit,
+            _ => ExitPlan.Cancel,
+        };
+    }
+
+    /// <summary>按退出决策执行退出（Cancel 忽略）。StopAndExit 异步停服后 Shutdown。</summary>
+    private void ExitApplication(ExitPlan plan)
+    {
+        switch (plan)
+        {
+            case ExitPlan.DetachAndExit:
+                _manager.DetachAndRelease();
+                break;
+            case ExitPlan.StopAndExit:
+                IsExiting = true;
+                _ = StopAndShutdownAsync();
+                return;
+            case ExitPlan.Cancel:
+                return;
         }
         IsExiting = true;
         Application.Current.Shutdown();
-        return true;
+    }
+
+    private async Task StopAndShutdownAsync()
+    {
+        try { await _manager.StopAsync(); }
+        finally { Application.Current.Shutdown(); }
     }
 
     /// <summary>主窗口关闭请求的结果。</summary>
@@ -590,9 +650,121 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
         if (action == CloseAction.Exit)
         {
-            return BeginExit() ? WindowCloseResult.Proceed : WindowCloseResult.Cancel;
+            var plan = ResolveServiceExit();
+            if (plan == ExitPlan.Cancel) return WindowCloseResult.Cancel;
+            ExitApplication(plan);
+            return WindowCloseResult.Proceed;
         }
         return WindowCloseResult.Minimize;
+    }
+
+    // ── 自动更新（T4） ─────────────────────────────────────────────
+
+    /// <summary>
+    /// 检查更新。manual=true：有更新时直接进入确认更新流程；
+    /// manual=false（启动静默检查）：仅提示（驱动标题栏徽标），不自动下载。
+    /// </summary>
+    public async Task CheckForUpdatesAsync(bool manual)
+    {
+        if (_checkingUpdate) return;
+        _checkingUpdate = true;
+        UpdateStatusText = "正在检查更新…";
+        try
+        {
+            var info = await UpdateService.CheckForUpdatesAsync();
+            _lastUpdateInfo = info;
+            if (info is null)
+            {
+                UpdateStatusText = manual ? "检查更新失败（网络或仓库不可达）。" : "";
+            }
+            else if (!info.UpdateAvailable)
+            {
+                UpdateAvailable = false;
+                UpdateStatusText = manual ? "已是最新版本。" : "";
+            }
+            else
+            {
+                LatestVersion = info.LatestVersion;
+                UpdateAvailable = true;
+                UpdateStatusText = $"发现新版本 v{info.LatestVersion}。";
+                if (manual) await UpdateNowAsync();
+            }
+        }
+        finally
+        {
+            _checkingUpdate = false;
+        }
+    }
+
+    /// <summary>执行更新：确认 → 目录可写预检 → 下载 → SHA256 校验 → 退出并由 updater 覆盖重启。</summary>
+    private async Task UpdateNowAsync()
+    {
+        var info = _lastUpdateInfo;
+        if (info is null || !info.UpdateAvailable || string.IsNullOrEmpty(info.AssetUrl))
+        {
+            // 徽标点击路径可能尚无检查结果：先查一次
+            await CheckForUpdatesAsync(manual: false);
+            info = _lastUpdateInfo;
+            if (info is null || !info.UpdateAvailable || string.IsNullOrEmpty(info.AssetUrl)) return;
+        }
+
+        var choice = MessageBox.Show(Window,
+            $"发现新版本：v{UpdateService.CurrentVersion} → v{info.LatestVersion}\n\n" +
+            "是否立即下载并更新？更新需要退出程序并自动重启。",
+            "软件更新",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Information,
+            MessageBoxResult.Yes);
+        if (choice != MessageBoxResult.Yes) return;
+
+        if (!UpdateService.CanWriteExeDirectory())
+        {
+            ShowMessage("程序所在目录不可写，无法自动更新。请将程序移动到可写目录（如桌面、文档）后重试。", isError: true);
+            return;
+        }
+
+        var exeDir = Path.GetDirectoryName(Environment.ProcessPath ?? "") ?? "";
+        var newPath = Path.Combine(exeDir, "AstesiaHarness.exe.update");
+        try
+        {
+            UpdateStatusText = "正在下载更新…";
+            var progress = new Progress<double>(p => UpdateStatusText = $"正在下载更新… {p:P0}");
+            await UpdateService.DownloadAsync(info.AssetUrl, newPath, progress);
+
+            UpdateStatusText = "正在校验完整性…";
+            if (!await UpdateService.VerifySha256Async(newPath, info.AssetSha256Url))
+            {
+                TryDelete(newPath);
+                UpdateStatusText = "更新文件校验失败，已取消（现有程序未受影响）。";
+                ShowMessage("更新文件校验失败，已取消。", isError: true);
+                return;
+            }
+
+            // 先处理服务退出决策（取消则中止更新，删除暂存文件）
+            var plan = ResolveServiceExit();
+            if (plan == ExitPlan.Cancel)
+            {
+                TryDelete(newPath);
+                UpdateStatusText = "已取消更新。";
+                return;
+            }
+
+            // 启动隐藏 updater（等待本进程退出后覆盖并重启），随后退出
+            UpdateService.LaunchUpdaterAndExit();
+            UpdateStatusText = "更新完成，正在重启…";
+            ExitApplication(plan);
+        }
+        catch (Exception ex)
+        {
+            TryDelete(newPath);
+            UpdateStatusText = "更新失败：" + ex.Message;
+            ShowMessage("更新失败：" + ex.Message, isError: true);
+        }
+    }
+
+    private static void TryDelete(string path)
+    {
+        try { if (File.Exists(path)) File.Delete(path); } catch (Exception) { }
     }
 
     public void Dispose()

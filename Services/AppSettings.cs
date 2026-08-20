@@ -36,4 +36,10 @@ public sealed class AppSettings
 
     /// <summary>开机自启（HKCU Run 键，--minimized 启动）。</summary>
     public bool StartWithWindows { get; set; } = false;
+
+    /// <summary>打开软件时同时启动 dsh（T6）。</summary>
+    public bool AutoStartServerOnLaunch { get; set; } = false;
+
+    /// <summary>启动时自动检查更新（T4，仅提示不自动下载）。</summary>
+    public bool AutoCheckUpdate { get; set; } = true;
 }

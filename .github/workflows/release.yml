@@ -38,6 +38,7 @@ jobs:
             -p:DebugType=None `
             -p:DebugSymbols=false `
             -p:Version=$version `
+            -p:UpdateAsset=AstesiaHarness.exe `
             -o publish-fdd
 
           # 2) 自包含单文件（免依赖）：开启单文件压缩 + 去 ICU + 仅中英语言包
@@ -50,6 +51,7 @@ jobs:
             -p:DebugType=None `
             -p:DebugSymbols=false `
             -p:Version=$version `
+            -p:UpdateAsset=AstesiaHarness-SelfContained.exe `
             -o publish-scd
 
           New-Item -ItemType Directory publish -Force | Out-Null
