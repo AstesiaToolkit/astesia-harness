@@ -1,5 +1,15 @@
 namespace AstesiaHarness.Services;
 
+/// <summary>关闭主界面时的行为（T1：互斥选取）。</summary>
+public enum CloseAction
+{
+    /// <summary>最小化到托盘，服务保持运行。</summary>
+    MinimizeToTray,
+
+    /// <summary>退出程序（服务在运行时按退出确认流程处理）。</summary>
+    Exit,
+}
+
 /// <summary>应用设置模型（与 settings.json 一一对应）。</summary>
 public sealed class AppSettings
 {
@@ -18,8 +28,11 @@ public sealed class AppSettings
     /// <summary>就绪后自动打开浏览器。</summary>
     public bool AutoOpenBrowser { get; set; } = true;
 
-    /// <summary>关闭主窗口时最小化到托盘而非退出。</summary>
-    public bool MinimizeToTrayOnClose { get; set; } = true;
+    /// <summary>关闭主界面时的行为（退出程序 / 最小化到托盘）。</summary>
+    public CloseAction CloseAction { get; set; } = CloseAction.MinimizeToTray;
+
+    /// <summary>关闭主界面时是否弹出选择对话框（勾选后每次点 ✕ 都询问）。</summary>
+    public bool PromptOnClose { get; set; } = false;
 
     /// <summary>开机自启（HKCU Run 键，--minimized 启动）。</summary>
     public bool StartWithWindows { get; set; } = false;

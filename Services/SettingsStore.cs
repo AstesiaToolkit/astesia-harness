@@ -32,13 +32,25 @@ public sealed class SettingsStore
         if (!File.Exists(SettingsPath)) return;
         try
         {
-            var loaded = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(SettingsPath));
+            var json = File.ReadAllText(SettingsPath);
+            var loaded = JsonSerializer.Deserialize<AppSettings>(json);
             if (loaded is not null)
             {
                 loaded.RepoPath = string.IsNullOrWhiteSpace(loaded.RepoPath) ? Current.RepoPath : loaded.RepoPath.Trim();
                 loaded.Host = string.IsNullOrWhiteSpace(loaded.Host) ? Current.Host : loaded.Host.Trim();
                 loaded.Port = loaded.Port is < 1 or > 65535 ? Current.Port : loaded.Port;
                 Current = loaded;
+            }
+
+            // 旧版迁移（T1）：settings.json 若含已废弃的 MinimizeToTrayOnClose 且尚无新字段，
+            // 将其映射为 CloseAction（true→最小化到托盘 / false→退出程序），PromptOnClose 保持默认 false。
+            using (var doc = JsonDocument.Parse(json))
+            {
+                if (doc.RootElement.TryGetProperty("MinimizeToTrayOnClose", out var legacy)
+                    && !doc.RootElement.TryGetProperty("CloseAction", out _))
+                {
+                    Current.CloseAction = legacy.GetBoolean() ? CloseAction.MinimizeToTray : CloseAction.Exit;
+                }
             }
         }
         catch (Exception)

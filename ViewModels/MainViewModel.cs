@@ -46,8 +46,12 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private string _host;
     private string _extraArgs;
     private bool _autoOpenBrowser;
-    private bool _minimizeToTrayOnClose;
+    private CloseAction _closeAction;
+    private bool _promptOnClose;
     private bool _startWithWindows;
+
+    private string? _messageLinkUrl;
+    private string _messageLinkText = "";
 
     private static readonly Brush GrayBrush = new SolidColorBrush(Color.FromRgb(0x9E, 0x9E, 0x9E));
     private static readonly Brush OrangeBrush = new SolidColorBrush(Color.FromRgb(0xFF, 0x98, 0x00));
@@ -68,7 +72,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         _host = s.Host;
         _extraArgs = s.ExtraArgs;
         _autoOpenBrowser = s.AutoOpenBrowser;
-        _minimizeToTrayOnClose = s.MinimizeToTrayOnClose;
+        _closeAction = s.CloseAction;
+        _promptOnClose = s.PromptOnClose;
         _startWithWindows = s.StartWithWindows;
 
         _uptimeTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
@@ -115,6 +120,18 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         OpenDataDirCommand = new RelayCommand(OpenDataDir);
         ClearLogCommand = new RelayCommand(() => Log.Clear());
         CopyLogCommand = new RelayCommand(CopyLog);
+        OpenMessageLinkCommand = new RelayCommand(() =>
+        {
+            if (string.IsNullOrEmpty(_messageLinkUrl)) return;
+            try
+            {
+                BrowserOpener.Open(_messageLinkUrl);
+            }
+            catch (Exception ex)
+            {
+                ShowMessage(ex.Message, isError: true);
+            }
+        });
 
         // ── 服务层事件 ──────────────────────────────────────────────
         _manager.StateChanged += OnStateChanged;
@@ -166,8 +183,44 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public string Host { get => _host; set { _host = value; OnPropertyChanged(); } }
     public string ExtraArgs { get => _extraArgs; set { _extraArgs = value; OnPropertyChanged(); } }
     public bool AutoOpenBrowser { get => _autoOpenBrowser; set { _autoOpenBrowser = value; OnPropertyChanged(); } }
-    public bool MinimizeToTrayOnClose { get => _minimizeToTrayOnClose; set { _minimizeToTrayOnClose = value; OnPropertyChanged(); } }
+
+    /// <summary>关闭主界面时的行为（互斥单选）。</summary>
+    public CloseAction CloseAction
+    {
+        get => _closeAction;
+        set
+        {
+            _closeAction = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(CloseActionIsExit));
+            OnPropertyChanged(nameof(CloseActionIsMinimize));
+        }
+    }
+
+    /// <summary>互斥单选：退出程序。</summary>
+    public bool CloseActionIsExit
+    {
+        get => _closeAction == CloseAction.Exit;
+        set { if (value) CloseAction = CloseAction.Exit; }
+    }
+
+    /// <summary>互斥单选：最小化到托盘。</summary>
+    public bool CloseActionIsMinimize
+    {
+        get => _closeAction == CloseAction.MinimizeToTray;
+        set { if (value) CloseAction = CloseAction.MinimizeToTray; }
+    }
+
+    /// <summary>关闭主界面时是否弹出选择对话框。</summary>
+    public bool PromptOnClose { get => _promptOnClose; set { _promptOnClose = value; OnPropertyChanged(); } }
+
     public bool StartWithWindows { get => _startWithWindows; set { _startWithWindows = value; OnPropertyChanged(); } }
+
+    // ── 消息条链接（T3 环境指引） ─────────────────────────────────
+
+    public string? MessageLinkUrl => _messageLinkUrl;
+    public string MessageLinkText => _messageLinkText;
+    public bool HasMessageLink => _messageLinkUrl is not null;
 
     public string[] HostSuggestions { get; } = { "127.0.0.1", "localhost" };
 
@@ -184,6 +237,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public RelayCommand OpenDataDirCommand { get; }
     public RelayCommand ClearLogCommand { get; }
     public RelayCommand CopyLogCommand { get; }
+    public RelayCommand OpenMessageLinkCommand { get; }
 
     // ── 托盘菜单入口 ────────────────────────────────────────────────
 
@@ -258,11 +312,11 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             }
         }, null);
 
-    private void OnManagerError(string message) =>
+    private void OnManagerError(EnvIssue issue) =>
         _ui.Post(_ =>
         {
             if (_isExiting) return;
-            ShowMessage(message, isError: true);
+            ShowMessage(issue.Message, isError: true, issue.LinkUrl, issue.LinkText);
             UpdateTrayTooltip();
         }, null);
 
@@ -319,7 +373,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         s.Host = string.IsNullOrWhiteSpace(_host) ? "127.0.0.1" : _host.Trim();
         s.ExtraArgs = _extraArgs.Trim();
         s.AutoOpenBrowser = _autoOpenBrowser;
-        s.MinimizeToTrayOnClose = _minimizeToTrayOnClose;
+        s.CloseAction = _closeAction;
+        s.PromptOnClose = _promptOnClose;
         s.StartWithWindows = _startWithWindows;
 
         _settings.Save();
@@ -339,7 +394,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         Host = s.Host;
         ExtraArgs = s.ExtraArgs;
         AutoOpenBrowser = s.AutoOpenBrowser;
-        MinimizeToTrayOnClose = s.MinimizeToTrayOnClose;
+        CloseAction = s.CloseAction;
+        PromptOnClose = s.PromptOnClose;
         StartWithWindows = s.StartWithWindows;
         ShowMessage("已恢复默认值（未保存，点击「保存设置」生效）。");
     }
@@ -388,12 +444,17 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         while (Log.Count > MaxLogLines) Log.RemoveAt(0);
     }
 
-    private void ShowMessage(string message, bool isError = false)
+    private void ShowMessage(string message, bool isError = false, string? linkUrl = null, string? linkText = null)
     {
         _messageText = message;
         _messageBrush = isError ? ErrorBrush : InfoBrush;
+        _messageLinkUrl = linkUrl;
+        _messageLinkText = string.IsNullOrWhiteSpace(linkText) ? "点击打开" : linkText;
         OnPropertyChanged(nameof(MessageText));
         OnPropertyChanged(nameof(MessageBrush));
+        OnPropertyChanged(nameof(MessageLinkUrl));
+        OnPropertyChanged(nameof(MessageLinkText));
+        OnPropertyChanged(nameof(HasMessageLink));
     }
 
     private void UpdateMeta()
@@ -442,12 +503,19 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         w.Activate();
     }
 
-    private void ExitFromTray()
+    private void ExitFromTray() => BeginExit();
+
+    /// <summary>
+    /// 退出程序流程：服务运行时弹确认（停止并退出 / 保持运行并退出 / 取消）。
+    /// 返回 true 表示应用继续退出（必要时已触发停止或脱离托管并调用 Shutdown）；
+    /// 返回 false 表示用户取消。
+    /// </summary>
+    private bool BeginExit()
     {
         var state = _manager.State;
         if (state is ServerState.Starting or ServerState.Running)
         {
-            var choice = MessageBox.Show(
+            var choice = MessageBox.Show(Window,
                 "DSH Web 服务正在运行。\n\n" +
                 "是(Y)：停止服务并退出\n" +
                 "否(N)：保持服务运行，仅退出启动器\n" +
@@ -465,18 +533,66 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
                         await _manager.StopAsync();
                         Application.Current.Shutdown();
                     });
-                    return;
+                    return true;
                 case MessageBoxResult.No:
                     _manager.DetachAndRelease();
                     IsExiting = true;
                     Application.Current.Shutdown();
-                    return;
+                    return true;
                 default:
-                    return;
+                    return false;
             }
         }
         IsExiting = true;
         Application.Current.Shutdown();
+        return true;
+    }
+
+    /// <summary>主窗口关闭请求的结果。</summary>
+    public enum WindowCloseResult
+    {
+        /// <summary>允许关闭（退出流程已触发）。</summary>
+        Proceed,
+
+        /// <summary>取消关闭并最小化到托盘。</summary>
+        Minimize,
+
+        /// <summary>取消关闭，窗口保持。</summary>
+        Cancel,
+    }
+
+    /// <summary>
+    /// 处理主窗口关闭请求（T1）：按设置执行「退出程序 / 最小化到托盘」；
+    /// 开启「退出时提示」时弹选择对话框，「不再提示」写回设置。
+    /// </summary>
+    public WindowCloseResult HandleWindowClosing()
+    {
+        if (_isExiting) return WindowCloseResult.Proceed;
+
+        var action = _closeAction;
+        if (_promptOnClose)
+        {
+            var dialog = new ClosePromptDialog(action) { Owner = Window };
+            if (dialog.ShowDialog() != true) return WindowCloseResult.Cancel;
+
+            if (dialog.DontAskAgain)
+            {
+                // 「不再提示」：写回设置（持久生效），此后直接按所选执行。
+                CloseAction = dialog.SelectedAction;
+                PromptOnClose = false;
+                var s = _settings.Current;
+                s.CloseAction = dialog.SelectedAction;
+                s.PromptOnClose = false;
+                _settings.Save();
+            }
+            action = dialog.SelectedAction;
+        }
+
+        if (action == CloseAction.Exit)
+        {
+            return BeginExit() ? WindowCloseResult.Proceed : WindowCloseResult.Cancel;
+        }
+        return WindowCloseResult.Minimize;
     }
 
     public void Dispose()

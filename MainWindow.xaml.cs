@@ -28,10 +28,19 @@ public partial class MainWindow : Window
     {
         var vm = DataContext as MainViewModel;
         if (vm is null || vm.IsExiting) return;
-        if (vm.MinimizeToTrayOnClose)
+        // T1：按设置/对话框决定 退出程序 / 最小化到托盘 / 取消
+        switch (vm.HandleWindowClosing())
         {
-            e.Cancel = true;
-            Hide();
+            case MainViewModel.WindowCloseResult.Cancel:
+                e.Cancel = true;
+                break;
+            case MainViewModel.WindowCloseResult.Minimize:
+                e.Cancel = true;
+                Hide();
+                break;
+            case MainViewModel.WindowCloseResult.Proceed:
+                // 允许关闭；退出流程（含服务确认）已在 VM 中处理
+                break;
         }
     }
 

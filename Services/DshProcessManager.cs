@@ -42,8 +42,8 @@ public sealed class DshProcessManager : IDisposable
     /// <summary>服务就绪，参数为完整 URL。</summary>
     public event Action<string>? Ready;
 
-    /// <summary>致命错误（含用户可读提示）。</summary>
-    public event Action<string>? Error;
+    /// <summary>致命错误（含用户可读指引，可带链接）。</summary>
+    public event Action<EnvIssue>? Error;
 
     /// <summary>当前状态。</summary>
     public ServerState State { get; private set; } = ServerState.Stopped;
@@ -67,30 +67,31 @@ public sealed class DshProcessManager : IDisposable
 
         try
         {
-            // 1) 仓库路径校验。
-            if (!Directory.Exists(settings.RepoPath))
+            // 1) 环境自检（T3）：仓库路径 / Node 存在 / Node 版本，失败即给出指引并停止。
+            var issue = await EnvironmentCheck.CheckAsync(settings);
+            if (issue is not null)
             {
-                Fail($"仓库路径不存在：{settings.RepoPath}（请在设置中修改）");
+                Fail(issue);
                 return;
+            }
+
+            // 1.5) 前端构建产物缺失提示（软提示，不阻断：就绪超时时仍会再次提示）。
+            if (!EnvironmentCheck.HasFrontendDist(settings.RepoPath))
+            {
+                EmitLog("提示：未找到前端构建产物 apps/web/dist/index.html，若启动后一直未就绪，请在该仓库运行 pnpm build。");
             }
 
             // 2) 启动器解析：pnpm.cmd（PATH）→ 降级 node 直启。
             var launcher = ResolveLauncher(settings);
             if (launcher is null)
             {
-                Fail("未找到 pnpm，且 PATH 中也没有 node.exe。请安装 Node.js（DSH 要求 ^22.19 || >=24）后重试。");
+                Fail(new EnvIssue(
+                    "未找到 pnpm，且 PATH 中也没有 node.exe。请安装 Node.js（DSH 要求 ^22.19 || >=24）后重试。",
+                    EnvironmentCheck.NodeDownloadUrl, "打开 Node.js 下载页"));
                 return;
             }
 
-            // 3) Node 版本校验（DSH engines: ^22.19.0 || >=24.0.0）。
-            if (!await IsNodeVersionSupportedAsync(launcher.NodePath))
-            {
-                Fail("Node 版本不满足 DSH 要求（^22.19.0 || >=24.0.0）。当前版本："
-                    + await TryGetNodeVersionAsync(launcher.NodePath));
-                return;
-            }
-
-            // 4) 端口探测：已运行则直接复用；被占用则失败。
+            // 3) 端口探测：已运行则直接复用；被占用则失败。
             var portStatus = await PortProbe.ProbeAsync(settings.Host, settings.Port);
             switch (portStatus)
             {
@@ -300,12 +301,14 @@ public sealed class DshProcessManager : IDisposable
         ProcessId = null;
     }
 
-    private void Fail(string message)
+    private void Fail(string message) => Fail(new EnvIssue(message));
+
+    private void Fail(EnvIssue issue)
     {
         SetState(ServerState.Failed);
         ClearProcessId();
-        EmitLog(message, isError: true);
-        Error?.Invoke(message);
+        EmitLog(issue.Message, isError: true);
+        Error?.Invoke(issue);
     }
 
     private void SetState(ServerState state)
@@ -329,71 +332,20 @@ public sealed class DshProcessManager : IDisposable
         var portArgs = $"--port {settings.Port} --host {settings.Host}{extra}";
 
         // 优先 pnpm：等价于用户手敲 `pnpm dsh web …`。
-        var pnpm = FindOnPath("pnpm.cmd") ?? FindOnPath("pnpm.exe") ?? FindOnPath("pnpm");
+        var pnpm = EnvironmentCheck.FindPnpmPath();
         if (pnpm is not null)
         {
-            var node = FindOnPath("node.exe") ?? "node";
+            var node = EnvironmentCheck.FindNodePath() ?? "node";
             return new LauncherInfo(pnpm, $"dsh web {portArgs}", node);
         }
 
         // 降级：直接 node 直启（与 pnpm 内部执行等价）。
-        var nodePath = FindOnPath("node.exe");
+        var nodePath = EnvironmentCheck.FindNodePath();
         if (nodePath is not null)
         {
             return new LauncherInfo(nodePath, $"--import tsx/esm apps/cli/src/bin.ts web {portArgs}", nodePath);
         }
         return null;
-    }
-
-    private static string? FindOnPath(string fileName)
-    {
-        var path = Environment.GetEnvironmentVariable("PATH") ?? "";
-        foreach (var dir in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
-        {
-            try
-            {
-                var candidate = Path.Combine(dir.Trim(), fileName);
-                if (File.Exists(candidate)) return candidate;
-            }
-            catch (Exception) { }
-        }
-        return null;
-    }
-
-    private static async Task<bool> IsNodeVersionSupportedAsync(string nodePath)
-    {
-        var version = await TryGetNodeVersionAsync(nodePath);
-        if (version is null) return false;
-        var match = Regex.Match(version, @"v?(\d+)\.(\d+)");
-        if (!match.Success) return false;
-        var major = int.Parse(match.Groups[1].Value);
-        var minor = int.Parse(match.Groups[2].Value);
-        return major >= 24 || (major == 22 && minor >= 19) || major > 22;
-    }
-
-    private static async Task<string?> TryGetNodeVersionAsync(string nodePath)
-    {
-        try
-        {
-            var psi = new ProcessStartInfo
-            {
-                FileName = nodePath,
-                Arguments = "--version",
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null) return null;
-            var output = await proc.StandardOutput.ReadToEndAsync();
-            await proc.WaitForExitAsync();
-            return output.Trim();
-        }
-        catch (Exception)
-        {
-            return null;
-        }
     }
 
     // ── Job Object P/Invoke ─────────────────────────────────────────
