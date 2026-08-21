@@ -32,7 +32,7 @@ public sealed class AppSettings
     public CloseAction CloseAction { get; set; } = CloseAction.MinimizeToTray;
 
     /// <summary>关闭主界面时是否弹出选择对话框（勾选后每次点 ✕ 都询问）。</summary>
-    public bool PromptOnClose { get; set; } = false;
+    public bool PromptOnClose { get; set; } = true;
 
     /// <summary>开机自启（HKCU Run 键，--minimized 启动）。</summary>
     public bool StartWithWindows { get; set; } = false;

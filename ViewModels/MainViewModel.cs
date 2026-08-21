@@ -501,7 +501,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         _messageText = message;
         _messageBrush = isError ? ErrorBrush : InfoBrush;
         _messageLinkUrl = linkUrl;
-        _messageLinkText = string.IsNullOrWhiteSpace(linkText) ? "点击打开" : linkText;
+        // 只有带链接时才显示"点击打开"，否则留空（Hyperlink 不可见），避免出现死链接
+        _messageLinkText = string.IsNullOrWhiteSpace(linkUrl) ? "" : (string.IsNullOrWhiteSpace(linkText) ? "点击打开" : linkText);
         OnPropertyChanged(nameof(MessageText));
         OnPropertyChanged(nameof(MessageBrush));
         OnPropertyChanged(nameof(MessageLinkUrl));

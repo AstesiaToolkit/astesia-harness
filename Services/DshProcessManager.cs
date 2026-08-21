@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 
@@ -166,7 +167,7 @@ public sealed class DshProcessManager : IDisposable
         }
     }
 
-    /// <summary>停止服务：终结整个 Job 内的进程树。</summary>
+    /// <summary>停止服务：终结整个 Job 内的进程树，并用"端口兜底"确保服务确已停止。</summary>
     public Task StopAsync()
     {
         lock (_lifecycleLock)
@@ -185,9 +186,11 @@ public sealed class DshProcessManager : IDisposable
             var proc = _process;
             if (proc is not null && !proc.HasExited)
             {
-                try { proc.Kill(entireProcessTree: true); } catch (Exception) { }
+                try { proc.Kill(entireProcessTree: true); } catch (Exception ex) { EmitLog($"进程树终止失败：{ex.Message}", isError: true); }
             }
             try { _process?.WaitForExit((int)StopWaitTimeout.TotalMilliseconds); } catch (Exception) { }
+            // 兜底：等待端口释放，未释放则按端口定位进程强杀（Job 未覆盖进程树时的最后防线）
+            EnsurePortReleased(_settings.Current.Host, _settings.Current.Port);
             CleanupProcessResources();
         });
     }
@@ -267,7 +270,19 @@ public sealed class DshProcessManager : IDisposable
     private void OnProcessExited(object? sender, EventArgs e)
     {
         var code = _process?.ExitCode;
+        var host = _settings.Current.Host;
+        var port = _settings.Current.Port;
         CleanupProcessResources();
+
+        // 兜底：根进程退出但服务端口仍被占用（典型：dsh 进程未纳入 Job 而成为孤儿）
+        // → 按端口定位并强杀，避免"进程看似停止、服务仍在运行"。
+        if (!_stopping && IsPortListening(host, port))
+        {
+            EmitLog("检测到根进程已退出但服务端口仍被占用，执行端口兜底终止…", isError: true);
+            var pid = FindPidByPort(port);
+            if (pid is > 0) KillPidTree(pid.Value);
+        }
+
         if (_stopping)
         {
             _stopping = false;
@@ -321,6 +336,113 @@ public sealed class DshProcessManager : IDisposable
     private void ClearProcessId() => ProcessId = null;
 
     private void EmitLog(string text, bool isError = false) => LogLine?.Invoke(text, isError);
+
+    // ── 端口兜底终止（Job 未覆盖进程树时的最后防线） ────────────────
+
+    /// <summary>轮询等待端口释放；超时仍占用则按端口定位进程并强杀。</summary>
+    private void EnsurePortReleased(string host, int port)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (DateTime.UtcNow < deadline)
+        {
+            if (!IsPortListening(host, port)) return;
+            Thread.Sleep(200);
+        }
+
+        EmitLog($"端口 {port} 在停止后仍被占用，执行端口兜底终止…", isError: true);
+        var pid = FindPidByPort(port);
+        if (pid is > 0)
+        {
+            EmitLog($"定位到占用进程 PID {pid}，正在终止其进程树。", isError: true);
+            KillPidTree(pid.Value);
+        }
+        else
+        {
+            EmitLog("未能定位占用端口 {port} 的进程（可能无监听或权限不足）。", isError: true);
+        }
+    }
+
+    /// <summary>目标端口是否有 TCP 监听（连接成功即认为在监听）。</summary>
+    private static bool IsPortListening(string host, int port)
+    {
+        try
+        {
+            using var client = new TcpClient();
+            var task = client.ConnectAsync(host, port);
+            if (!task.Wait(300)) return false;
+            return client.Connected;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>终止指定 PID 的进程树；失败时回退 taskkill /T /F。</summary>
+    private static void KillPidTree(int pid)
+    {
+        try
+        {
+            using var p = Process.GetProcessById(pid);
+            if (!p.HasExited) p.Kill(entireProcessTree: true);
+        }
+        catch (Exception)
+        {
+            try
+            {
+                Process.Start(new ProcessStartInfo("taskkill", $"/PID {pid} /T /F")
+                {
+                    CreateNoWindow = true,
+                    UseShellExecute = false,
+                });
+            }
+            catch (Exception) { }
+        }
+    }
+
+    /// <summary>通过 GetExtendedTcpTable 查找监听指定端口的进程 PID（仅 LISTEN 行）。</summary>
+    private static int? FindPidByPort(int port)
+    {
+        var size = 0;
+        GetExtendedTcpTable(IntPtr.Zero, ref size, false, AF_INET, TCP_TABLE_OWNER_PID_LISTENER, 0);
+        if (size == 0) return null;
+
+        var buffer = Marshal.AllocHGlobal(size);
+        try
+        {
+            if (GetExtendedTcpTable(buffer, ref size, false, AF_INET, TCP_TABLE_OWNER_PID_LISTENER, 0) != 0) return null;
+            var numEntries = Marshal.ReadInt32(buffer);
+            // MIB_TCPTABLE_OWNER_PID：DWORD 条目数后紧跟行数组（实测 x64 上亦无填充，行起始偏移恒为 4）
+            const int rowsOffset = 4;
+            for (var i = 0; i < numEntries; i++)
+            {
+                var row = IntPtr.Add(buffer, rowsOffset + i * 24);
+                // MIB_TCPROW_OWNER_PID: state(0) localAddr(4) localPort(8,网络序) remoteAddr(12) remotePort(16) pid(20)
+                var state = Marshal.ReadInt32(row, 0);
+                var rawPort = Marshal.ReadInt32(row, 8) & 0xFFFF;
+                var localPort = (ushort)((rawPort >> 8) | ((rawPort & 0xFF) << 8));
+                if (state == MIB_TCP_STATE_LISTEN && localPort == port)
+                {
+                    return Marshal.ReadInt32(row, 20);
+                }
+            }
+            return null;
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(buffer);
+        }
+    }
+
+    // ── 端口兜底 P/Invoke ─────────────────────────────────────────
+
+    private const int AF_INET = 2;
+    // TCP_TABLE_OWNER_PID_LISTENER = 3（只含 LISTEN 行；4 是 CONNECTIONS，无监听行）
+    private const int TCP_TABLE_OWNER_PID_LISTENER = 3;
+    private const int MIB_TCP_STATE_LISTEN = 2;
+
+    [DllImport("iphlpapi.dll", SetLastError = true)]
+    private static extern uint GetExtendedTcpTable(IntPtr pTcpTable, ref int pdwSize, bool bOrder, int ulAf, int tableClass, uint reserved);
 
     // ── 启动器解析 ──────────────────────────────────────────────────
 
@@ -408,7 +530,11 @@ public sealed class DshProcessManager : IDisposable
     private void AssignToJob(Process process)
     {
         var job = CreateJobObject(IntPtr.Zero, null);
-        if (job == IntPtr.Zero) return; // 极端情况下无 Job，退化为单进程 Kill(true)
+        if (job == IntPtr.Zero)
+        {
+            EmitLog("警告：Job Object 创建失败，停止时改用进程树/端口兜底终止。", isError: true);
+            return;
+        }
 
         var info = new JOBOBJECT_EXTENDED_LIMIT_INFORMATION();
         info.BasicLimitInformation.LimitFlags = JobObjectLimitKillOnJobClose;
@@ -419,6 +545,7 @@ public sealed class DshProcessManager : IDisposable
             Marshal.StructureToPtr(info, ptr, false);
             if (!SetInformationJobObject(job, JobObjectExtendedLimitInformation, ptr, (uint)size))
             {
+                EmitLog("警告：Job 参数设置失败（KILL_ON_JOB_CLOSE 未生效），停止时改用兜底终止。", isError: true);
                 CloseHandle(job);
                 return;
             }
@@ -430,7 +557,9 @@ public sealed class DshProcessManager : IDisposable
 
         if (!AssignProcessToJobObject(job, process.Handle))
         {
-            // 进程可能已退出（ERROR_ACCESS_DENIED）；此时 Job 无进程，直接关闭。
+            // 进程可能已退出（ERROR_ACCESS_DENIED）；或进程已属于其他 Job（嵌套被拒）——
+            // 此时 Job 无进程，直接关闭；停止时端口兜底会接管。
+            EmitLog("警告：进程未能纳入 Job（可能已退出或已属于其他 Job），停止时改用进程树/端口兜底终止。", isError: true);
             CloseHandle(job);
             return;
         }
