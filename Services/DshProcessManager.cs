@@ -178,6 +178,12 @@ public sealed class DshProcessManager : IDisposable
         return Task.Run(() =>
         {
             EmitLog("正在停止 DSH Web 服务…");
+            // 复用外部服务（DshRunning 路径）时本启动器没有托管进程：停止只能按端口终止占用进程
+            var ownedProcess = _process;
+            if (ownedProcess is null)
+            {
+                EmitLog("该服务并非由本启动器启动（外部启动/复用路径），将按端口终止占用进程。", isError: true);
+            }
             var job = _jobHandle;
             if (job != IntPtr.Zero)
             {
@@ -192,6 +198,14 @@ public sealed class DshProcessManager : IDisposable
             // 兜底：等待端口释放，未释放则按端口定位进程强杀（Job 未覆盖进程树时的最后防线）
             EnsurePortReleased(_settings.Current.Host, _settings.Current.Port);
             CleanupProcessResources();
+            // 复用路径没有托管进程，Exited 事件永远不会触发 → 必须手动完成状态迁移，
+            // 否则 State 停在 Running，停止按钮永不置灰、再点停止无效。
+            if (ownedProcess is null)
+            {
+                _stopping = false;
+                SetState(ServerState.Stopped);
+                EmitLog("DSH Web 服务已停止。");
+            }
         });
     }
 
