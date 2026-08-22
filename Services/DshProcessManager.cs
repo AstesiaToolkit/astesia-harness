@@ -502,11 +502,14 @@ public sealed class DshProcessManager : IDisposable
         var extra = string.IsNullOrWhiteSpace(settings.ExtraArgs) ? "" : " " + settings.ExtraArgs.Trim();
         // T7：Host=0.0.0.0 时不传 --host（会被 dsh CLI 守卫拒绝），改挂载自动生成的补丁；
         // 并剥离附加参数中的 --host 片段，防止用户手填 --host 0.0.0.0 误触发守卫。
+        // 注意：--patch 是 dsh 启动器层的选项，必须排在所有应用参数（--port/--trusted-host 等）之前——
+        // 启动器解析到第一个不认识的 token（--port）就停止解析自家选项，之后的 --patch 会被当成 web app 参数，
+        // 由 web-startup 解析时报 "unknown option --patch"。
         string portArgs;
         if (settings.Host == "0.0.0.0")
         {
             var stripped = StripHostArgs(extra);
-            portArgs = $"--port {settings.Port} --patch \"{SettingsStore.LanYmlPath}\"{stripped}";
+            portArgs = $"--patch \"{SettingsStore.LanYmlPath}\" --port {settings.Port}{stripped}";
         }
         else
         {
