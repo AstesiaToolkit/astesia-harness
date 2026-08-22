@@ -26,10 +26,15 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 {
     private const int MaxLogLines = 5000;
 
+    /// <summary>文本类设置自动保存的防抖间隔（停止输入后延迟落盘）。</summary>
+    private static readonly TimeSpan SettingsAutoSaveDelay = TimeSpan.FromMilliseconds(800);
+
     private readonly SettingsStore _settings;
     private readonly DshProcessManager _manager;
     private readonly SynchronizationContext _ui;
     private readonly DispatcherTimer _uptimeTimer;
+    private readonly DispatcherTimer _settingsDebounce;
+    private bool _suppressAutoSave;
 
     private DateTime _runningSince;
     private bool _isExiting;
@@ -89,6 +94,14 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         _uptimeTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _uptimeTimer.Tick += (_, _) => UpdateMeta();
 
+        // 文本类设置防抖保存：停止输入约 0.8 秒后自动落盘
+        _settingsDebounce = new DispatcherTimer { Interval = SettingsAutoSaveDelay };
+        _settingsDebounce.Tick += (_, _) =>
+        {
+            _settingsDebounce.Stop();
+            AutoSave();
+        };
+
         // ── 命令 ────────────────────────────────────────────────────
         StartCommand = new RelayCommand(
             () => RunSafely(async () =>
@@ -124,7 +137,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             ShowMessage("URL 已复制到剪贴板。");
         }, () => _manager.State is ServerState.Running);
 
-        SaveSettingsCommand = new RelayCommand(SaveSettings);
         ResetSettingsCommand = new RelayCommand(ResetSettings);
         BrowseRepoCommand = new RelayCommand(BrowseRepo);
         OpenDataDirCommand = new RelayCommand(OpenDataDir);
@@ -191,18 +203,23 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
     // ── 设置属性（双向绑定） ────────────────────────────────────────
 
-    public string RepoPath { get => _repoPath; set { _repoPath = value; OnPropertyChanged(); } }
-    public string PortText { get => _portText; set { _portText = value; OnPropertyChanged(); } }
+    /// <summary>文本类设置（防抖保存）：修改后停止输入约 0.8 秒自动落盘。</summary>
+    public string RepoPath { get => _repoPath; set { _repoPath = value; OnPropertyChanged(); ScheduleAutoSave(); } }
+    public string PortText { get => _portText; set { _portText = value; OnPropertyChanged(); ScheduleAutoSave(); } }
+
+    /// <summary>绑定主机（下拉选择，改动立即保存；含 T7 局域网安全确认）。</summary>
     public string Host
     {
         get => _host;
-        set { _host = value; OnPropertyChanged(); OnPropertyChanged(nameof(LanEnabled)); }
+        set { _host = value; OnPropertyChanged(); OnPropertyChanged(nameof(LanEnabled)); AutoSaveOnChange(); }
     }
 
     /// <summary>T7：当前是否对局域网开放（绑定 0.0.0.0），驱动设置页红色安全横幅。</summary>
     public bool LanEnabled => _host == "0.0.0.0";
-    public string ExtraArgs { get => _extraArgs; set { _extraArgs = value; OnPropertyChanged(); } }
-    public bool AutoOpenBrowser { get => _autoOpenBrowser; set { _autoOpenBrowser = value; OnPropertyChanged(); } }
+    public string ExtraArgs { get => _extraArgs; set { _extraArgs = value; OnPropertyChanged(); ScheduleAutoSave(); } }
+
+    /// <summary>即时保存项：改动立即落盘。</summary>
+    public bool AutoOpenBrowser { get => _autoOpenBrowser; set { _autoOpenBrowser = value; OnPropertyChanged(); AutoSaveOnChange(); } }
 
     /// <summary>关闭主界面时的行为（互斥单选）。</summary>
     public CloseAction CloseAction
@@ -214,6 +231,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             OnPropertyChanged();
             OnPropertyChanged(nameof(CloseActionIsExit));
             OnPropertyChanged(nameof(CloseActionIsMinimize));
+            AutoSaveOnChange();
         }
     }
 
@@ -232,15 +250,15 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     }
 
     /// <summary>关闭主界面时是否弹出选择对话框。</summary>
-    public bool PromptOnClose { get => _promptOnClose; set { _promptOnClose = value; OnPropertyChanged(); } }
+    public bool PromptOnClose { get => _promptOnClose; set { _promptOnClose = value; OnPropertyChanged(); AutoSaveOnChange(); } }
 
-    public bool StartWithWindows { get => _startWithWindows; set { _startWithWindows = value; OnPropertyChanged(); } }
+    public bool StartWithWindows { get => _startWithWindows; set { _startWithWindows = value; OnPropertyChanged(); AutoSaveOnChange(); } }
 
     /// <summary>打开软件时同时启动 dsh（T6）。</summary>
-    public bool AutoStartServerOnLaunch { get => _autoStartServerOnLaunch; set { _autoStartServerOnLaunch = value; OnPropertyChanged(); } }
+    public bool AutoStartServerOnLaunch { get => _autoStartServerOnLaunch; set { _autoStartServerOnLaunch = value; OnPropertyChanged(); AutoSaveOnChange(); } }
 
     /// <summary>启动时自动检查更新（T4）。</summary>
-    public bool AutoCheckUpdate { get => _autoCheckUpdate; set { _autoCheckUpdate = value; OnPropertyChanged(); } }
+    public bool AutoCheckUpdate { get => _autoCheckUpdate; set { _autoCheckUpdate = value; OnPropertyChanged(); AutoSaveOnChange(); } }
 
     // ── 版本与更新（T4/T5） ─────────────────────────────────────────
 
@@ -301,7 +319,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public RelayCommand RestartCommand { get; }
     public RelayCommand OpenBrowserCommand { get; }
     public RelayCommand CopyUrlCommand { get; }
-    public RelayCommand SaveSettingsCommand { get; }
     public RelayCommand ResetSettingsCommand { get; }
     public RelayCommand BrowseRepoCommand { get; }
     public RelayCommand OpenDataDirCommand { get; }
@@ -435,8 +452,14 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     /// </summary>
     private string ResolveUrl() => _url ?? $"http://{_settings.Current.Host}:{_settings.Current.Port}";
 
-    private void SaveSettings()
+    /// <summary>
+    /// 自动保存：校验文本输入 → 写回设置模型 → 落盘（含 T7 lan.yml 补丁联动）。
+    /// 非法输入不落盘仅提示；勾选/单选/下拉即时触发，文本输入由防抖/失焦触发。
+    /// </summary>
+    private void AutoSave()
     {
+        if (_suppressAutoSave) return;
+
         if (!int.TryParse(_portText.Trim(), out var port) || port is < 1 or > 65535)
         {
             ShowMessage("端口必须是 1–65535 的整数。", isError: true);
@@ -489,24 +512,60 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         OnPropertyChanged(nameof(PortText));
 
         var running = _manager.State is ServerState.Starting or ServerState.Running;
-        ShowMessage(running ? "设置已保存；运行中的参数将在下次重启后生效。" : "设置已保存。");
+        ShowMessage(running ? "设置已自动保存；运行中的参数将在下次重启后生效。" : "设置已自动保存。");
+    }
+
+    /// <summary>文本输入变化：重置防抖计时器（停止输入约 0.8 秒后自动保存）。</summary>
+    private void ScheduleAutoSave()
+    {
+        if (_suppressAutoSave) return;
+        _settingsDebounce.Stop();
+        _settingsDebounce.Start();
+    }
+
+    /// <summary>勾选/单选/下拉等即时项：改动立即保存。</summary>
+    private void AutoSaveOnChange()
+    {
+        if (_suppressAutoSave) return;
+        AutoSave();
+    }
+
+    /// <summary>文本输入失焦或窗口关闭前：立即保存（冲刷防抖计时器）。</summary>
+    public void CommitPendingSettings()
+    {
+        _settingsDebounce.Stop();
+        AutoSave();
     }
 
     private void ResetSettings()
     {
-        _settings.ResetToDefaults();
-        var s = _settings.Current;
-        RepoPath = s.RepoPath;
-        PortText = s.Port.ToString();
-        Host = s.Host;
-        ExtraArgs = s.ExtraArgs;
-        AutoOpenBrowser = s.AutoOpenBrowser;
-        CloseAction = s.CloseAction;
-        PromptOnClose = s.PromptOnClose;
-        StartWithWindows = s.StartWithWindows;
-        AutoStartServerOnLaunch = s.AutoStartServerOnLaunch;
-        AutoCheckUpdate = s.AutoCheckUpdate;
-        ShowMessage("已恢复默认值（未保存，点击「保存设置」生效）。");
+        _settingsDebounce.Stop();
+        _suppressAutoSave = true;
+        try
+        {
+            _settings.ResetToDefaults();
+            var s = _settings.Current;
+            RepoPath = s.RepoPath;
+            PortText = s.Port.ToString();
+            Host = s.Host;
+            ExtraArgs = s.ExtraArgs;
+            AutoOpenBrowser = s.AutoOpenBrowser;
+            CloseAction = s.CloseAction;
+            PromptOnClose = s.PromptOnClose;
+            StartWithWindows = s.StartWithWindows;
+            AutoStartServerOnLaunch = s.AutoStartServerOnLaunch;
+            AutoCheckUpdate = s.AutoCheckUpdate;
+
+            // T7 补丁联动：恢复默认（Host=127.0.0.1）后删除局域网补丁
+            if (s.Host == "0.0.0.0") SettingsStore.WriteLanPatch();
+            else SettingsStore.RemoveLanPatch();
+        }
+        finally
+        {
+            _suppressAutoSave = false;
+        }
+        _settings.Save();
+        ShowMessage("已恢复默认设置并保存。");
     }
 
     private void BrowseRepo()
@@ -687,6 +746,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         if (_isExiting) return WindowCloseResult.Proceed;
 
+        CommitPendingSettings(); // 关闭/最小化前冲刷未落盘的文本输入
+
         var action = _closeAction;
         if (_promptOnClose)
         {
@@ -696,12 +757,21 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             if (dialog.DontAskAgain)
             {
                 // 「不再提示」：写回设置（持久生效），此后直接按所选执行。
-                CloseAction = dialog.SelectedAction;
-                PromptOnClose = false;
-                var s = _settings.Current;
-                s.CloseAction = dialog.SelectedAction;
-                s.PromptOnClose = false;
-                _settings.Save();
+                // 抑制属性触发的自动保存，仅在此处统一落盘一次（避免文本校验失败时丢失该改动）。
+                _suppressAutoSave = true;
+                try
+                {
+                    CloseAction = dialog.SelectedAction;
+                    PromptOnClose = false;
+                    var s = _settings.Current;
+                    s.CloseAction = dialog.SelectedAction;
+                    s.PromptOnClose = false;
+                    _settings.Save();
+                }
+                finally
+                {
+                    _suppressAutoSave = false;
+                }
             }
             action = dialog.SelectedAction;
         }
@@ -833,6 +903,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         _manager.Error -= OnManagerError;
         _manager.LanUrlChanged -= OnLanUrlChanged;
         _uptimeTimer.Stop();
+        _settingsDebounce.Stop();
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;

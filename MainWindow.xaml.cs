@@ -32,6 +32,12 @@ public partial class MainWindow : Window
 
     private void OnCloseButton(object sender, RoutedEventArgs e) => Close();
 
+    /// <summary>设置页文本输入失焦：立即保存（无需等待防抖，也无需点「保存设置」）。</summary>
+    private void OnSettingsFieldLostFocus(object sender, RoutedEventArgs e)
+    {
+        (DataContext as MainViewModel)?.CommitPendingSettings();
+    }
+
     private void OnDataContextChanged(object sender, DependencyPropertyChangedEventArgs e)
     {
         // DataContext 在构造后由 App 注入；此处建立日志集合订阅。

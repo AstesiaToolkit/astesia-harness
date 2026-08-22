@@ -74,7 +74,7 @@ public sealed class SettingsStore
         SyncStartWithWindows(Current.StartWithWindows);
     }
 
-    /// <summary>恢复默认设置（不落盘，由界面"恢复默认"调用后由用户决定是否保存）。</summary>
+    /// <summary>恢复默认设置（由界面「恢复默认」调用后立即落盘）。</summary>
     public void ResetToDefaults() => Current = new AppSettings();
 
     // ── T7 局域网共享补丁 ──────────────────────────────────────────

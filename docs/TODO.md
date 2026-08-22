@@ -322,7 +322,7 @@
 
 - `Services/SettingsStore.cs`（`LanYmlPath` 常量 + `WriteLanPatch(bool)` / `RemoveLanPatch()`）
 - `Services/DshProcessManager.cs`（`ResolveLauncher` 参数拼装分支 + ExtraArgs 剥离）
-- `ViewModels/MainViewModel.cs`（SaveSettings 联动生成/删除、安全确认、`LanEnabled` 提示属性）
+- `ViewModels/MainViewModel.cs`（AutoSave 联动生成/删除、安全确认、`LanEnabled` 提示属性）
 - `MainWindow.xaml`（Host 下拉加 0.0.0.0、安全横幅）
 
 ### 验收标准

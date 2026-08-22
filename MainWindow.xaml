@@ -197,11 +197,11 @@
                         <TextBlock Text="DSH 仓库路径" FontWeight="SemiBold" />
                         <DockPanel Margin="0,4,0,12">
                             <Button DockPanel.Dock="Right" Content="浏览…" Command="{Binding BrowseRepoCommand}" Padding="10,2" Margin="6,0,0,0" />
-                            <TextBox Text="{Binding RepoPath, UpdateSourceTrigger=PropertyChanged}" />
+                            <TextBox Text="{Binding RepoPath, UpdateSourceTrigger=PropertyChanged}" LostFocus="OnSettingsFieldLostFocus" />
                         </DockPanel>
 
                         <TextBlock Text="端口（透传 --port）" FontWeight="SemiBold" />
-                        <TextBox Text="{Binding PortText, UpdateSourceTrigger=PropertyChanged}" Width="120" HorizontalAlignment="Left" Margin="0,4,0,12" />
+                        <TextBox Text="{Binding PortText, UpdateSourceTrigger=PropertyChanged}" Width="120" HorizontalAlignment="Left" Margin="0,4,0,12" LostFocus="OnSettingsFieldLostFocus" />
 
                         <TextBlock Text="绑定主机（透传 --host）" FontWeight="SemiBold" />
                         <ComboBox ItemsSource="{Binding HostOptions}" DisplayMemberPath="Display" SelectedValuePath="Value"
@@ -216,7 +216,7 @@
                         </Border>
 
                         <TextBlock Text="附加参数（空格分隔，如 --trusted-host lab.internal）" FontWeight="SemiBold" />
-                        <TextBox Text="{Binding ExtraArgs, UpdateSourceTrigger=PropertyChanged}" Margin="0,4,0,12" />
+                        <TextBox Text="{Binding ExtraArgs, UpdateSourceTrigger=PropertyChanged}" Margin="0,4,0,12" LostFocus="OnSettingsFieldLostFocus" />
 
                         <CheckBox Content="服务就绪后自动打开浏览器" IsChecked="{Binding AutoOpenBrowser}" Margin="0,2,0,10" />
 
@@ -243,7 +243,6 @@
                         </StackPanel>
 
                         <StackPanel Orientation="Horizontal">
-                            <Button Content="保存设置" Command="{Binding SaveSettingsCommand}" Padding="14,4" Margin="0,0,8,0" />
                             <Button Content="恢复默认" Command="{Binding ResetSettingsCommand}" Padding="14,4" Margin="0,0,8,0" />
                             <Button Content="打开数据目录" Command="{Binding OpenDataDirCommand}" Padding="14,4" />
                         </StackPanel>
