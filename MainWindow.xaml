@@ -132,6 +132,13 @@
                             Padding="6,1" Margin="6,0,0,0" />
                 </StackPanel>
                 <TextBlock Text="{Binding MetaText}" FontSize="11" Foreground="#777" Margin="18,5,0,0" />
+                <!-- T7：局域网地址（0.0.0.0 绑定时从就绪行解析） -->
+                <StackPanel Orientation="Horizontal" Margin="18,4,0,0"
+                            Visibility="{Binding HasLanUrl, Converter={StaticResource BoolToVis}}">
+                    <TextBlock Text="局域网地址：" FontSize="11" Foreground="#777" VerticalAlignment="Center" />
+                    <TextBlock Text="{Binding LanUrlText}" FontSize="11" Foreground="#2E7D32" FontWeight="SemiBold"
+                               VerticalAlignment="Center" ToolTip="局域网内设备可访问该地址" />
+                </StackPanel>
             </StackPanel>
         </Border>
 
@@ -197,8 +204,16 @@
                         <TextBox Text="{Binding PortText, UpdateSourceTrigger=PropertyChanged}" Width="120" HorizontalAlignment="Left" Margin="0,4,0,12" />
 
                         <TextBlock Text="绑定主机（透传 --host）" FontWeight="SemiBold" />
-                        <ComboBox IsEditable="True" Text="{Binding Host, UpdateSourceTrigger=PropertyChanged}"
-                                  ItemsSource="{Binding HostSuggestions}" Width="180" HorizontalAlignment="Left" Margin="0,4,0,12" />
+                        <ComboBox ItemsSource="{Binding HostOptions}" DisplayMemberPath="Display" SelectedValuePath="Value"
+                                  SelectedValue="{Binding Host, UpdateSourceTrigger=PropertyChanged}"
+                                  Width="220" HorizontalAlignment="Left" Margin="0,4,0,12" />
+                        <!-- T7：局域网共享安全横幅 -->
+                        <Border Visibility="{Binding LanEnabled, Converter={StaticResource BoolToVis}}"
+                                Background="#FDECEA" BorderBrush="#F5C6CB" BorderThickness="1" CornerRadius="3"
+                                Padding="8,6" Margin="0,0,0,12">
+                            <TextBlock Text="⚠ 当前对局域网开放（0.0.0.0）：局域网内任何设备都可访问本服务并运行工具，SDK 会自动信任局域网 IP、无认证。请仅在可信网络使用。"
+                                       Foreground="#B71C1C" FontSize="12" TextWrapping="Wrap" />
+                        </Border>
 
                         <TextBlock Text="附加参数（空格分隔，如 --trusted-host lab.internal）" FontWeight="SemiBold" />
                         <TextBox Text="{Binding ExtraArgs, UpdateSourceTrigger=PropertyChanged}" Margin="0,4,0,12" />

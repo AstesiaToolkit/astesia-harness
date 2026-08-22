@@ -43,6 +43,9 @@ public sealed class DshProcessManager : IDisposable
     /// <summary>服务就绪，参数为完整 URL。</summary>
     public event Action<string>? Ready;
 
+    /// <summary>局域网地址变化（0.0.0.0 绑定时从就绪行解析，如 http://192.168.x.x:3080；null=不可用）。</summary>
+    public event Action<string?>? LanUrlChanged;
+
     /// <summary>致命错误（含用户可读指引，可带链接）。</summary>
     public event Action<EnvIssue>? Error;
 
@@ -51,6 +54,9 @@ public sealed class DshProcessManager : IDisposable
 
     /// <summary>根进程 PID（Starting / Running / Failed 时有效）。</summary>
     public int? ProcessId { get; private set; }
+
+    /// <summary>局域网访问地址（T7，从就绪行 LAN 部分解析）。</summary>
+    public string? LanUrl { get; private set; }
 
     public DshProcessManager(SettingsStore settings) => _settings = settings;
 
@@ -65,6 +71,7 @@ public sealed class DshProcessManager : IDisposable
         var settings = _settings.Current;
         SetState(ServerState.Starting);
         ClearProcessId();
+        SetLanUrl(null);
 
         try
         {
@@ -80,6 +87,12 @@ public sealed class DshProcessManager : IDisposable
             if (!EnvironmentCheck.HasFrontendDist(settings.RepoPath))
             {
                 EmitLog("提示：未找到前端构建产物 apps/web/dist/index.html，若启动后一直未就绪，请在该仓库运行 pnpm build。");
+            }
+
+            // 1.6) T7 防御：Host=0.0.0.0 时确保 lan.yml 补丁存在（设置文件可能被手工修改）。
+            if (settings.Host == "0.0.0.0" && !File.Exists(SettingsStore.LanYmlPath))
+            {
+                SettingsStore.WriteLanPatch();
             }
 
             // 2) 启动器解析：pnpm.cmd（PATH）→ 降级 node 直启。
@@ -271,6 +284,7 @@ public sealed class DshProcessManager : IDisposable
     {
         if (string.IsNullOrEmpty(e.Data)) return;
         _watcher?.FeedLine(e.Data);
+        TryParseLanUrl(e.Data);
         EmitLog(e.Data, isError: false);
     }
 
@@ -328,6 +342,27 @@ public sealed class DshProcessManager : IDisposable
         _watcher = null;
         if (_jobHandle != IntPtr.Zero) { CloseHandle(_jobHandle); _jobHandle = IntPtr.Zero; }
         ProcessId = null;
+        SetLanUrl(null);
+    }
+
+    private static readonly Regex LanUrlPattern = new(@"LAN:\s*(https?://\S+)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    /// <summary>从就绪行解析局域网地址（如 "dsh web: http://127.0.0.1:3080 (LAN: http://192.168.1.5:3080)"）。</summary>
+    private void TryParseLanUrl(string line)
+    {
+        var m = LanUrlPattern.Match(line);
+        if (!m.Success) return;
+        var url = m.Groups[1].Value;
+        if (LanUrl == url) return;
+        LanUrl = url;
+        LanUrlChanged?.Invoke(url);
+    }
+
+    private void SetLanUrl(string? url)
+    {
+        if (LanUrl == url) return;
+        LanUrl = url;
+        LanUrlChanged?.Invoke(url);
     }
 
     private void Fail(string message) => Fail(new EnvIssue(message));
@@ -465,7 +500,18 @@ public sealed class DshProcessManager : IDisposable
     private static LauncherInfo? ResolveLauncher(AppSettings settings)
     {
         var extra = string.IsNullOrWhiteSpace(settings.ExtraArgs) ? "" : " " + settings.ExtraArgs.Trim();
-        var portArgs = $"--port {settings.Port} --host {settings.Host}{extra}";
+        // T7：Host=0.0.0.0 时不传 --host（会被 dsh CLI 守卫拒绝），改挂载自动生成的补丁；
+        // 并剥离附加参数中的 --host 片段，防止用户手填 --host 0.0.0.0 误触发守卫。
+        string portArgs;
+        if (settings.Host == "0.0.0.0")
+        {
+            var stripped = StripHostArgs(extra);
+            portArgs = $"--port {settings.Port} --patch \"{SettingsStore.LanYmlPath}\"{stripped}";
+        }
+        else
+        {
+            portArgs = $"--port {settings.Port} --host {settings.Host}{extra}";
+        }
 
         // 优先 pnpm：等价于用户手敲 `pnpm dsh web …`。
         var pnpm = EnvironmentCheck.FindPnpmPath();
@@ -482,6 +528,13 @@ public sealed class DshProcessManager : IDisposable
             return new LauncherInfo(nodePath, $"--import tsx/esm apps/cli/src/bin.ts web {portArgs}", nodePath);
         }
         return null;
+    }
+
+    /// <summary>剥离参数串中的 --host 与 --host= 片段（含带引号的值）。</summary>
+    private static string StripHostArgs(string args)
+    {
+        if (string.IsNullOrWhiteSpace(args)) return "";
+        return Regex.Replace(args, @"\s*--host(?:=|\s+)(?:""[^""]*""|\S+)", "", RegexOptions.IgnoreCase);
     }
 
     // ── Job Object P/Invoke ─────────────────────────────────────────

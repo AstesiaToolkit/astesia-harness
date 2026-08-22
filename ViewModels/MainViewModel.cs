@@ -150,6 +150,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         _manager.LogLine += OnLogLine;
         _manager.Ready += OnReady;
         _manager.Error += OnManagerError;
+        _manager.LanUrlChanged += OnLanUrlChanged;
 
         RefreshCommandStates();
         UpdateMeta();
@@ -192,7 +193,14 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
     public string RepoPath { get => _repoPath; set { _repoPath = value; OnPropertyChanged(); } }
     public string PortText { get => _portText; set { _portText = value; OnPropertyChanged(); } }
-    public string Host { get => _host; set { _host = value; OnPropertyChanged(); } }
+    public string Host
+    {
+        get => _host;
+        set { _host = value; OnPropertyChanged(); OnPropertyChanged(nameof(LanEnabled)); }
+    }
+
+    /// <summary>T7：当前是否对局域网开放（绑定 0.0.0.0），驱动设置页红色安全横幅。</summary>
+    public bool LanEnabled => _host == "0.0.0.0";
     public string ExtraArgs { get => _extraArgs; set { _extraArgs = value; OnPropertyChanged(); } }
     public bool AutoOpenBrowser { get => _autoOpenBrowser; set { _autoOpenBrowser = value; OnPropertyChanged(); } }
 
@@ -268,7 +276,23 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public string MessageLinkText => _messageLinkText;
     public bool HasMessageLink => _messageLinkUrl is not null;
 
-    public string[] HostSuggestions { get; } = { "127.0.0.1", "localhost" };
+    /// <summary>绑定主机选项（dsh webserver schema 仅允许 127.0.0.1 / 0.0.0.0）。</summary>
+    public sealed record HostOption(string Display, string Value);
+
+    public IReadOnlyList<HostOption> HostOptions { get; } = new[]
+    {
+        new HostOption("127.0.0.1（本机）", "127.0.0.1"),
+        new HostOption("0.0.0.0（局域网共享）", "0.0.0.0"),
+    };
+
+    // ── 局域网地址（T7，从就绪行 LAN 部分解析） ─────────────────────
+
+    private string? _lanUrl;
+
+    /// <summary>局域网访问地址（如 http://192.168.1.5:3080），未解析时为空。</summary>
+    public string? LanUrlText => _lanUrl;
+
+    public bool HasLanUrl => _lanUrl is not null;
 
     // ── 命令 ────────────────────────────────────────────────────────
 
@@ -368,6 +392,15 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             UpdateTrayTooltip();
         }, null);
 
+    private void OnLanUrlChanged(string? url) =>
+        _ui.Post(_ =>
+        {
+            if (_isExiting) return;
+            _lanUrl = url;
+            OnPropertyChanged(nameof(LanUrlText));
+            OnPropertyChanged(nameof(HasLanUrl));
+        }, null);
+
     // ── 动作 ────────────────────────────────────────────────────────
 
     private async void RunSafely(Func<Task> action)
@@ -416,9 +449,29 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         }
 
         var s = _settings.Current;
+
+        // T7：切换到 0.0.0.0（局域网共享）时弹一次安全确认；取消则回退选择且不保存。
+        var newHost = string.IsNullOrWhiteSpace(_host) ? "127.0.0.1" : _host.Trim();
+        if (newHost == "0.0.0.0" && s.Host != "0.0.0.0")
+        {
+            var confirm = MessageBox.Show(Window,
+                "将对局域网开放（绑定 0.0.0.0）。\n\n" +
+                "局域网内任何设备都能访问本服务并运行工具（SDK 会自动信任局域网 IP，无认证）。\n" +
+                "请仅在可信网络开启。是否继续？",
+                "局域网共享",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning,
+                MessageBoxResult.No);
+            if (confirm != MessageBoxResult.Yes)
+            {
+                Host = s.Host; // 取消：回退下拉选择
+                return;
+            }
+        }
+
         s.RepoPath = _repoPath.Trim();
         s.Port = port;
-        s.Host = string.IsNullOrWhiteSpace(_host) ? "127.0.0.1" : _host.Trim();
+        s.Host = newHost;
         s.ExtraArgs = _extraArgs.Trim();
         s.AutoOpenBrowser = _autoOpenBrowser;
         s.CloseAction = _closeAction;
@@ -426,6 +479,10 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         s.StartWithWindows = _startWithWindows;
         s.AutoStartServerOnLaunch = _autoStartServerOnLaunch;
         s.AutoCheckUpdate = _autoCheckUpdate;
+
+        // T7 补丁联动：0.0.0.0 → 生成 lan.yml 挂载；否则删除
+        if (newHost == "0.0.0.0") SettingsStore.WriteLanPatch();
+        else SettingsStore.RemoveLanPatch();
 
         _settings.Save();
         _portText = s.Port.ToString();
@@ -774,6 +831,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         _manager.LogLine -= OnLogLine;
         _manager.Ready -= OnReady;
         _manager.Error -= OnManagerError;
+        _manager.LanUrlChanged -= OnLanUrlChanged;
         _uptimeTimer.Stop();
     }
 
