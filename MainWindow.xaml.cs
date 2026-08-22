@@ -1,6 +1,7 @@
 using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Windows;
+using System.Windows.Input;
 using System.Windows.Threading;
 using AstesiaHarness.ViewModels;
 
@@ -77,5 +78,15 @@ public partial class MainWindow : Window
             if (LogList.Items.Count == 0) return;
             LogList.ScrollIntoView(LogList.Items[LogList.Items.Count - 1]);
         });
+    }
+
+    /// <summary>日志区 Ctrl+C：复制选中的日志行；无选中时不拦截（保持默认行为）。</summary>
+    private void OnLogPreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key != Key.C || Keyboard.Modifiers != ModifierKeys.Control) return;
+        if (DataContext is not MainViewModel vm) return;
+        if (LogList.SelectedItems.Count == 0) return;
+        e.Handled = true;
+        vm.CopySelectedLogs(LogList.SelectedItems.Cast<LogEntry>().ToList());
     }
 }

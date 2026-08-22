@@ -170,6 +170,8 @@
                              BorderBrush="#333" BorderThickness="1"
                              ScrollViewer.HorizontalScrollBarVisibility="Auto"
                              FontFamily="Consolas, Microsoft YaHei UI" FontSize="12"
+                             SelectionMode="Extended"
+                             PreviewKeyDown="OnLogPreviewKeyDown"
                              VirtualizingPanel.IsVirtualizing="True"
                              VirtualizingPanel.VirtualizationMode="Recycling">
                         <ListBox.ItemContainerStyle>

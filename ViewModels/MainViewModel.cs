@@ -598,13 +598,27 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         }
     }
 
+    /// <summary>「复制全部」：复制整个日志缓冲区。</summary>
     private void CopyLog()
     {
-        var text = string.Join(Environment.NewLine, Log.Select(l => $"[{l.TimeText}] {l.Text}"));
+        var text = BuildLogText(Log);
         if (text.Length == 0) return;
         Clipboard.SetText(text);
         ShowMessage("日志已复制到剪贴板。");
     }
+
+    /// <summary>Ctrl+C：复制日志区选中的行（含时间戳）。</summary>
+    public void CopySelectedLogs(IReadOnlyList<LogEntry> selected)
+    {
+        var text = BuildLogText(selected);
+        if (text.Length == 0) return;
+        Clipboard.SetText(text);
+        ShowMessage($"已复制 {selected.Count} 行日志。");
+    }
+
+    /// <summary>把若干日志条目拼成剪贴板文本（每行 "[时间] 内容"）。</summary>
+    private static string BuildLogText(IEnumerable<LogEntry> entries)
+        => string.Join(Environment.NewLine, entries.Select(l => $"[{l.TimeText}] {l.Text}"));
 
     private void AppendLog(string text, bool isError)
     {
