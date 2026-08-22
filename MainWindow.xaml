@@ -172,6 +172,8 @@
                              FontFamily="Consolas, Microsoft YaHei UI" FontSize="12"
                              SelectionMode="Extended"
                              PreviewKeyDown="OnLogPreviewKeyDown"
+                             MouseLeftButtonDown="OnLogMouseLeftButtonDown"
+                             MouseMove="OnLogMouseMove"
                              VirtualizingPanel.IsVirtualizing="True"
                              VirtualizingPanel.VirtualizationMode="Recycling">
                         <ListBox.ItemContainerStyle>
