@@ -1,7 +1,7 @@
 # AstesiaHarness TODO（待实现功能清单）
 
 > 状态说明：✅ = 已实现；⬜ = 待实现。每项含需求、交互设计、涉及文件与验收标准，实现时直接按此执行。
-> 当前版本：v0.2.0
+> 当前版本：v0.3.0
 
 ---
 
@@ -276,6 +276,72 @@
 
 ---
 
+## ⬜ T7. 绑定主机 0.0.0.0（局域网共享）自动补丁挂载 — 待实现
+
+### 需求
+
+设置「绑定主机」设为 `0.0.0.0` 时，自动让 dsh 真正绑定 0.0.0.0 开放局域网（手机/其他设备可访问），为远程访问插件提供局域网前提。
+
+### 关键机制（为什么不能直接传参）
+
+- dsh 的 **CLI 守卫**（`web-app/src/startup.ts:69`）拒绝 `--host 0.0.0.0`（"would expose remote code execution to the network"）；
+- 但 webserver **schema 支持 0.0.0.0**，且**补丁层按 id 替换整行 config、字面量胜出**，天然绕过 CLI 守卫；
+- 因此：**Host == "0.0.0.0" 时，启动参数不传 `--host`，改为挂载自动生成的补丁**。
+
+### 具体方案
+
+1. **补丁文件**（数据目录 `%APPDATA%\AstesiaHarness\lan.yml`，`SettingsStore` 提供路径常量与生成/删除辅助）：
+   ```yaml
+   # 由 AstesiaHarness 自动生成：绑定 0.0.0.0 开放局域网（T7）
+   # 经补丁层绕过 dsh CLI 的 --host 0.0.0.0 守卫；端口保留表达式跟随设置
+   - id: webserver
+     config:
+       host: '0.0.0.0'
+       port: !!js ctx.webStartup.port ?? 3080
+   ```
+   - **端口必须用 `!!js ctx.webStartup.port ?? 3080` 表达式**：补丁替换整行 config，若写死 `port: 3080` 会与启动器设置的端口脱节（服务绑 3080、UI 按配置端口显示 → 错乱）。
+
+2. **设置与 UI**：
+   - `HostSuggestions` 增加 `0.0.0.0`（可编辑下拉，值即 `0.0.0.0`）；
+   - 保存设置时：Host == `0.0.0.0` → 生成 lan.yml + **安全确认弹窗**（局域网任意设备可开会话/跑工具，SDK 自动信任 LAN IP、无认证，仅限可信网络；切换回非 0.0.0.0 时弹一次即可）；
+   - Host 改为其他值 → 删除 lan.yml，恢复正常参数；
+   - 设置区当 Host == `0.0.0.0` 常驻红色安全横幅。
+
+3. **参数拼装**（`DshProcessManager.ResolveLauncher`）：
+   - 常规：`--port {port} --host {host} [extra]`（现状不变）；
+   - Host == `0.0.0.0`：`--port {port} --patch {lan.yml 路径}`，**不传 `--host`**；
+   - **剥离冲突参数**：0.0.0.0 模式下，`ExtraArgs` 中的 `--host <x>` 片段需剥离（正则），防止用户手填 `--host 0.0.0.0` 误触发 CLI 守卫。
+
+4. **联动不受影响（无需改动）**：
+   - 就绪检测/URL 显示/PortProbe 均走 127.0.0.1 —— 0.0.0.0 绑定下回环可达；
+   - 端口跟随 `--port`（补丁表达式）；
+   - 已运行复用（探测 127.0.0.1 成功即复用）正常；
+   - 就绪行 `dsh web: http://127.0.0.1:3080 (LAN: http://<ip>:3080)` 被现有正则捕获。
+
+### 涉及文件
+
+- `Services/SettingsStore.cs`（`LanYmlPath` 常量 + `WriteLanPatch(bool)` / `RemoveLanPatch()`）
+- `Services/DshProcessManager.cs`（`ResolveLauncher` 参数拼装分支 + ExtraArgs 剥离）
+- `ViewModels/MainViewModel.cs`（SaveSettings 联动生成/删除、安全确认、`LanEnabled` 提示属性）
+- `MainWindow.xaml`（Host 下拉加 0.0.0.0、安全横幅）
+
+### 验收标准
+
+1. Host=`0.0.0.0` 保存 → 弹安全确认 → lan.yml 生成；启动后 dsh 绑定 0.0.0.0，日志出现 `(LAN: http://<ip>:3080)`，手机可访问；
+2. 全程**不出现** CLI 守卫报错（未传 `--host 0.0.0.0`）；
+3. 修改端口后 lan.yml 无需手动更新（表达式跟随）；
+4. Host 改回 127.0.0.1/localhost → lan.yml 删除、参数恢复、本机行为不变；
+5. 0.0.0.0 模式下 ExtraArgs 含 `--host …` 时不误触发守卫（已剥离）；
+6. 本机就绪/停止/复用/自动打开浏览器不受影响。
+
+### 待确认点
+
+- 安全确认仅"切换到 0.0.0.0 时"弹一次（建议），还是每次保存都弹；
+- 是否在状态区顺带显示解析出的 LAN URL（可选增强）；
+- 0.0.0.0 与「远程访问插件」（dsh-remote-web-ui 等）的配合：插件提示"需 --host 0.0.0.0 或公网地址"——T7 即其局域网前提，插件自身配对门控 `/remote`、`/m/`，但**不门控 `/api`**（SDK 自动信任 LAN IP），安全提示文案需覆盖这点。
+
+---
+
 ## 实现进度
 
 - ✅ T1（关闭行为设置）— 已实现于 v0.2.0
@@ -284,3 +350,4 @@
 - ✅ T4（自动更新）— 已实现于 v0.3.0
 - ✅ T5（标题版本显示 + 更新高亮点击）— 已实现于 v0.3.0（方案 A：自定义标题栏）
 - ✅ T6（打开软件时同时启动 dsh）— 已实现于 v0.3.0
+- ⬜ T7（绑定主机 0.0.0.0 自动补丁挂载）— 待实现
