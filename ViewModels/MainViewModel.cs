@@ -50,6 +50,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private string _portText;
     private string _host;
     private string _extraArgs;
+    private DshSource _dshSource;
     private bool _autoOpenBrowser;
     private CloseAction _closeAction;
     private bool _promptOnClose;
@@ -84,6 +85,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         _portText = s.Port.ToString();
         _host = s.Host;
         _extraArgs = s.ExtraArgs;
+        _dshSource = s.DshSource;
         _autoOpenBrowser = s.AutoOpenBrowser;
         _closeAction = s.CloseAction;
         _promptOnClose = s.PromptOnClose;
@@ -166,6 +168,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
         RefreshCommandStates();
         UpdateMeta();
+        _ = RefreshDshVersionAsync(); // T8：显示当前 dsh 来源的版本
     }
 
     /// <summary>托盘图标（由 App 注入，状态变化时刷新 tooltip）。</summary>
@@ -216,6 +219,79 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
     /// <summary>T7：当前是否对局域网开放（绑定 0.0.0.0），驱动设置页红色安全横幅。</summary>
     public bool LanEnabled => _host == "0.0.0.0";
+
+    // ── dsh 来源（T8） ─────────────────────────────────────────────
+
+    /// <summary>dsh 来源（源码仓库 / 全局命令），改动立即保存并刷新版本显示。</summary>
+    public DshSource DshSource
+    {
+        get => _dshSource;
+        set
+        {
+            if (_dshSource == value) return;
+            _dshSource = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(IsSourceRepo));
+            OnPropertyChanged(nameof(IsGlobalCommand));
+            AutoSaveOnChange();
+            _ = RefreshDshVersionAsync();
+        }
+    }
+
+    /// <summary>互斥单选：源码仓库。</summary>
+    public bool IsSourceRepo
+    {
+        get => _dshSource == DshSource.SourceRepo;
+        set { if (value) DshSource = DshSource.SourceRepo; }
+    }
+
+    /// <summary>互斥单选：全局命令。</summary>
+    public bool IsGlobalCommand
+    {
+        get => _dshSource == DshSource.GlobalCommand;
+        set { if (value) DshSource = DshSource.GlobalCommand; }
+    }
+
+    /// <summary>当前 dsh 来源的版本显示（如 "（源码）0.1.0-rc.7" / "（全局）0.1.1-rc.2"）。</summary>
+    public string DshVersionText
+    {
+        get => _dshVersionText;
+        private set { _dshVersionText = value; OnPropertyChanged(); }
+    }
+
+    private string _dshVersionText = "";
+
+    /// <summary>刷新 dsh 来源版本：源码读 apps/cli/package.json；全局运行 dsh --version。</summary>
+    private async Task RefreshDshVersionAsync()
+    {
+        if (_dshSource == DshSource.SourceRepo)
+        {
+            var v = ReadRepoDshVersion();
+            DshVersionText = string.IsNullOrEmpty(v) ? "（源码）未知" : $"（源码）{v}";
+        }
+        else
+        {
+            var dsh = EnvironmentCheck.FindDshPath();
+            var v = dsh is null ? null : await EnvironmentCheck.TryGetNodeVersionAsync(dsh); // 通用 --version 探测
+            DshVersionText = string.IsNullOrEmpty(v) ? "（全局）未知" : $"（全局）{v}";
+        }
+    }
+
+    private string ReadRepoDshVersion()
+    {
+        try
+        {
+            var pkg = Path.Combine(_repoPath, "apps", "cli", "package.json");
+            if (!File.Exists(pkg)) return "";
+            using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(pkg));
+            return doc.RootElement.TryGetProperty("version", out var v) ? v.GetString() ?? "" : "";
+        }
+        catch (Exception)
+        {
+            return "";
+        }
+    }
+
     public string ExtraArgs { get => _extraArgs; set { _extraArgs = value; OnPropertyChanged(); ScheduleAutoSave(); } }
 
     /// <summary>即时保存项：改动立即落盘。</summary>
@@ -413,10 +489,25 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         _ui.Post(_ =>
         {
             if (_isExiting) return;
-            _lanUrl = url;
+            _lanUrl = ComposeLanDisplay(url);
             OnPropertyChanged(nameof(LanUrlText));
             OnPropertyChanged(nameof(HasLanUrl));
         }, null);
+
+    /// <summary>
+    /// 组合局域网显示地址：优先用本机解析并过滤虚拟网卡后的真实 IP（可多个，逗号分隔）；
+    /// 无解析结果时回退 DSH 日志里的地址。
+    /// </summary>
+    private string? ComposeLanDisplay(string? logLanUrl)
+    {
+        var port = int.TryParse(_portText, out var p) && p is > 0 and <= 65535 ? p : _settings.Current.Port;
+        var resolved = LanAddressResolver.ResolveLanAddresses();
+        if (resolved.Count > 0)
+        {
+            return string.Join(" · ", resolved.Select(ip => $"http://{ip}:{port}"));
+        }
+        return logLanUrl;
+    }
 
     // ── 动作 ────────────────────────────────────────────────────────
 
@@ -465,7 +556,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             ShowMessage("端口必须是 1–65535 的整数。", isError: true);
             return;
         }
-        if (string.IsNullOrWhiteSpace(_repoPath))
+        // 仓库路径校验仅源码模式需要（全局命令模式不依赖仓库）
+        if (_dshSource == DshSource.SourceRepo && string.IsNullOrWhiteSpace(_repoPath))
         {
             ShowMessage("仓库路径不能为空。", isError: true);
             return;
@@ -496,6 +588,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         s.Port = port;
         s.Host = newHost;
         s.ExtraArgs = _extraArgs.Trim();
+        s.DshSource = _dshSource;
         s.AutoOpenBrowser = _autoOpenBrowser;
         s.CloseAction = _closeAction;
         s.PromptOnClose = _promptOnClose;
@@ -549,6 +642,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             PortText = s.Port.ToString();
             Host = s.Host;
             ExtraArgs = s.ExtraArgs;
+            DshSource = s.DshSource;
             AutoOpenBrowser = s.AutoOpenBrowser;
             CloseAction = s.CloseAction;
             PromptOnClose = s.PromptOnClose;

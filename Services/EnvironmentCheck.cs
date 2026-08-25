@@ -35,6 +35,9 @@ public static class EnvironmentCheck
 
     public static string? FindPnpmPath() => FindOnPath("pnpm.cmd") ?? FindOnPath("pnpm.exe") ?? FindOnPath("pnpm");
 
+    /// <summary>全局 dsh 命令（npm i -g @deepseek-ai/dsh 后位于 %APPDATA%\npm\dsh.cmd 等）。</summary>
+    public static string? FindDshPath() => FindOnPath("dsh.cmd") ?? FindOnPath("dsh.exe") ?? FindOnPath("dsh");
+
     /// <summary>DSH engines 要求：^22.19.0 || >=24.0.0。</summary>
     public static async Task<bool> IsNodeVersionSupportedAsync(string nodePath)
     {
@@ -78,14 +81,27 @@ public static class EnvironmentCheck
 
     /// <summary>
     /// 启动前集中自检，返回首个阻断性问题（null = 全部通过）。
-    /// 顺序：仓库路径 → Node 存在 → Node 版本（pnpm 缺失可降级 node 直启，不阻断）。
+    /// SourceRepo：仓库路径 → Node 存在 → Node 版本；
+    /// GlobalCommand：全局 dsh 存在 → Node 存在 → Node 版本（不检查仓库/dist，全局包自带前端）。
     /// </summary>
     public static async Task<EnvIssue?> CheckAsync(AppSettings settings)
     {
-        if (!Directory.Exists(settings.RepoPath))
+        if (settings.DshSource == DshSource.SourceRepo)
         {
-            return new EnvIssue(
-                $"仓库路径不存在：{settings.RepoPath}。请到「设置」页修改为正确的 DeepSeek Harness 仓库目录。");
+            if (!Directory.Exists(settings.RepoPath))
+            {
+                return new EnvIssue(
+                    $"仓库路径不存在：{settings.RepoPath}。请到「设置」页修改为正确的 DeepSeek Harness 仓库目录。");
+            }
+        }
+        else
+        {
+            if (FindDshPath() is null)
+            {
+                return new EnvIssue(
+                    "未找到全局 dsh 命令。请先运行 `npm install -g @deepseek-ai/dsh` 安装（或把「dsh 来源」改回「源码仓库」）。",
+                    "https://www.npmjs.com/package/@deepseek-ai/dsh", "打开 npm 页面");
+            }
         }
 
         var nodePath = FindNodePath();

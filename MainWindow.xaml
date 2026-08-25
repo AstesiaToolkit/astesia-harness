@@ -198,11 +198,26 @@
             <TabItem Header="设置">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="6,10,6,10" MaxWidth="560" HorizontalAlignment="Left">
+                        <TextBlock Text="dsh 来源" FontWeight="SemiBold" Margin="0,0,0,2" />
+                        <RadioButton Content="源码仓库（pnpm dsh web，需仓库检出+依赖+dist）" GroupName="DshSource"
+                                     IsChecked="{Binding IsSourceRepo}" Margin="6,2,0,2" />
+                        <RadioButton Content="全局命令（npm install -g @deepseek-ai/dsh，免源码）" GroupName="DshSource"
+                                     IsChecked="{Binding IsGlobalCommand}" Margin="6,2,0,2" />
+                        <StackPanel Orientation="Horizontal" Margin="6,2,0,10">
+                            <TextBlock Text="dsh 版本：" FontSize="12" Foreground="#666" VerticalAlignment="Center" />
+                            <TextBlock Text="{Binding DshVersionText}" FontSize="12" Foreground="#444" VerticalAlignment="Center" />
+                        </StackPanel>
+
                         <TextBlock Text="DSH 仓库路径" FontWeight="SemiBold" />
                         <DockPanel Margin="0,4,0,12">
-                            <Button DockPanel.Dock="Right" Content="浏览…" Command="{Binding BrowseRepoCommand}" Padding="10,2" Margin="6,0,0,0" />
-                            <TextBox Text="{Binding RepoPath, UpdateSourceTrigger=PropertyChanged}" LostFocus="OnSettingsFieldLostFocus" />
+                            <Button DockPanel.Dock="Right" Content="浏览…" Command="{Binding BrowseRepoCommand}" Padding="10,2" Margin="6,0,0,0"
+                                    IsEnabled="{Binding IsSourceRepo}" />
+                            <TextBox Text="{Binding RepoPath, UpdateSourceTrigger=PropertyChanged}" LostFocus="OnSettingsFieldLostFocus"
+                                     IsEnabled="{Binding IsSourceRepo}" />
                         </DockPanel>
+                        <TextBlock Text="全局命令模式无需仓库路径（需先执行 npm install -g @deepseek-ai/dsh）。"
+                                   FontSize="11" Foreground="#888" Margin="0,-8,0,10"
+                                   Visibility="{Binding IsGlobalCommand, Converter={StaticResource BoolToVis}}" />
 
                         <TextBlock Text="端口（透传 --port）" FontWeight="SemiBold" />
                         <TextBox Text="{Binding PortText, UpdateSourceTrigger=PropertyChanged}" Width="120" HorizontalAlignment="Left" Margin="0,4,0,12" LostFocus="OnSettingsFieldLostFocus" />

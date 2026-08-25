@@ -83,8 +83,9 @@ public sealed class DshProcessManager : IDisposable
                 return;
             }
 
-            // 1.5) 前端构建产物缺失提示（软提示，不阻断：就绪超时时仍会再次提示）。
-            if (!EnvironmentCheck.HasFrontendDist(settings.RepoPath))
+            // 1.5) 前端构建产物缺失提示（软提示，仅源码模式：全局包自带前端 dist）。
+            if (settings.DshSource == DshSource.SourceRepo
+                && !EnvironmentCheck.HasFrontendDist(settings.RepoPath))
             {
                 EmitLog("提示：未找到前端构建产物 apps/web/dist/index.html，若启动后一直未就绪，请在该仓库运行 pnpm build。");
             }
@@ -95,12 +96,14 @@ public sealed class DshProcessManager : IDisposable
                 SettingsStore.WriteLanPatch();
             }
 
-            // 2) 启动器解析：pnpm.cmd（PATH）→ 降级 node 直启。
+            // 2) 启动器解析：源码 → pnpm（降级 node 直启）；全局 → dsh 命令。
             var launcher = ResolveLauncher(settings);
             if (launcher is null)
             {
                 Fail(new EnvIssue(
-                    "未找到 pnpm，且 PATH 中也没有 node.exe。请安装 Node.js（DSH 要求 ^22.19 || >=24）后重试。",
+                    settings.DshSource == DshSource.GlobalCommand
+                        ? "未找到全局 dsh 命令。请先运行 `npm install -g @deepseek-ai/dsh`（或把「dsh 来源」改回「源码仓库」）。"
+                        : "未找到 pnpm，且 PATH 中也没有 node.exe。请安装 Node.js（DSH 要求 ^22.19 || >=24）后重试。",
                     EnvironmentCheck.NodeDownloadUrl, "打开 Node.js 下载页"));
                 return;
             }
@@ -124,7 +127,7 @@ public sealed class DshProcessManager : IDisposable
             {
                 FileName = launcher.FileName,
                 Arguments = launcher.Arguments,
-                WorkingDirectory = settings.RepoPath,
+                WorkingDirectory = launcher.WorkingDirectory,
                 UseShellExecute = false,
                 CreateNoWindow = true,
                 RedirectStandardOutput = true,
@@ -153,7 +156,7 @@ public sealed class DshProcessManager : IDisposable
             ProcessId = _process.Id;
             AssignToJob(_process);
             EmitLog($"已启动：{launcher.FileName} {launcher.Arguments}");
-            EmitLog($"工作目录：{settings.RepoPath}");
+            EmitLog($"工作目录：{launcher.WorkingDirectory}");
 
             _process.BeginOutputReadLine();
             _process.BeginErrorReadLine();
@@ -495,7 +498,7 @@ public sealed class DshProcessManager : IDisposable
 
     // ── 启动器解析 ──────────────────────────────────────────────────
 
-    private sealed record LauncherInfo(string FileName, string Arguments, string NodePath);
+    private sealed record LauncherInfo(string FileName, string Arguments, string WorkingDirectory);
 
     private static LauncherInfo? ResolveLauncher(AppSettings settings)
     {
@@ -516,19 +519,30 @@ public sealed class DshProcessManager : IDisposable
             portArgs = $"--port {settings.Port} --host {settings.Host}{extra}";
         }
 
-        // 优先 pnpm：等价于用户手敲 `pnpm dsh web …`。
+        // T8：工作目录按来源——源码用仓库目录；全局命令用中性目录（dsh web 不依赖 cwd）。
+        var workingDir = settings.DshSource == DshSource.SourceRepo
+            ? settings.RepoPath
+            : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+
+        // T8：全局 dsh 命令模式（npm i -g @deepseek-ai/dsh，免源码）。
+        if (settings.DshSource == DshSource.GlobalCommand)
+        {
+            var dsh = EnvironmentCheck.FindDshPath();
+            return dsh is null ? null : new LauncherInfo(dsh, $"web {portArgs}", workingDir);
+        }
+
+        // 源码模式：优先 pnpm（等价于用户手敲 `pnpm dsh web …`）。
         var pnpm = EnvironmentCheck.FindPnpmPath();
         if (pnpm is not null)
         {
-            var node = EnvironmentCheck.FindNodePath() ?? "node";
-            return new LauncherInfo(pnpm, $"dsh web {portArgs}", node);
+            return new LauncherInfo(pnpm, $"dsh web {portArgs}", workingDir);
         }
 
         // 降级：直接 node 直启（与 pnpm 内部执行等价）。
         var nodePath = EnvironmentCheck.FindNodePath();
         if (nodePath is not null)
         {
-            return new LauncherInfo(nodePath, $"--import tsx/esm apps/cli/src/bin.ts web {portArgs}", nodePath);
+            return new LauncherInfo(nodePath, $"--import tsx/esm apps/cli/src/bin.ts web {portArgs}", workingDir);
         }
         return null;
     }

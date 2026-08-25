@@ -10,11 +10,24 @@ public enum CloseAction
     Exit,
 }
 
+/// <summary>dsh 运行来源（T8）。</summary>
+public enum DshSource
+{
+    /// <summary>从源码仓库运行（pnpm dsh web，需仓库检出 + 依赖 + dist）。</summary>
+    SourceRepo,
+
+    /// <summary>使用全局 dsh 命令（npm install -g @deepseek-ai/dsh，免源码）。</summary>
+    GlobalCommand,
+}
+
 /// <summary>应用设置模型（与 settings.json 一一对应）。</summary>
 public sealed class AppSettings
 {
-    /// <summary>DSH 仓库根目录（pnpm dsh web 的工作目录）。</summary>
+    /// <summary>DSH 仓库根目录（仅 SourceRepo 来源使用）。</summary>
     public string RepoPath { get; set; } = @"F:\Codes\DownloadProjects\deepseek-harness";
+
+    /// <summary>dsh 来源（源码仓库 / 全局命令）。</summary>
+    public DshSource DshSource { get; set; } = DshSource.SourceRepo;
 
     /// <summary>服务端口（透传 --port）。</summary>
     public int Port { get; set; } = 3080;
