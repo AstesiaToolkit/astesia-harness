@@ -403,10 +403,11 @@
 4. 两种来源切换后，`$DSH_HOME` 会话/工作区互通；
 5. 0.0.0.0 局域网共享在两种来源下行为一致。
 
-### 待确认点
+### 待确认点（已确认）
 
-- 全局命令模式下 `dsh` 缺失时，是否自动执行 `npm install -g @deepseek-ai/dsh`（一键安装，需确认是否引入该交互）或仅给指引；
-- 全局 `dsh` 版本落后于源码（当前 npm latest `0.1.1-rc.2`）——是否需要显示"dsh 来源"对应的版本信息。
+- ✅ 全局 `dsh` 缺失时：**仅给指引**（`npm install -g @deepseek-ai/dsh` + 链接），不自动安装；
+- ✅ 设置中**显示当前来源的 dsh 版本**：GlobalCommand → 运行 `dsh --version` 探测（失败显示"未知"）；SourceRepo → 读仓库 `apps/cli/package.json` 的 version；
+- 补充说明（已明确的关系）：源码检出与全局 dsh 是两套独立产物，共用 `$DSH_HOME`；**纯使用场景全局 dsh 即可、无需仓库**（官方 dsh-desktop-launcher 即此模式），开发 DSH/插件才需要源码模式。
 
 ---
 
