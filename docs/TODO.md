@@ -342,6 +342,74 @@
 
 ---
 
+## ⬜ T8. dsh 来源设置（源码仓库 / 全局命令）— 待实现
+
+### 需求
+
+当前 AstesiaHarness 只能从**源码检出**部署 dsh（`RepoPath` + `pnpm dsh web`）。而 dsh 另有独立 npm 发行包 **`@deepseek-ai/dsh`**（`npm install -g @deepseek-ai/dsh` → 全局 `dsh` 命令，自带前端 dist 与 profile bundle，无需源码）。T8 增加「dsh 来源」设置，二选一，兼容非源码用户。
+
+### 具体方案
+
+1. **设置模型**（`Services/AppSettings.cs`）：
+   ```csharp
+   public enum DshSource { SourceRepo, GlobalCommand }
+   public DshSource DshSource { get; set; } = DshSource.SourceRepo; // 默认源码，向后兼容
+   ```
+   `RepoPath` 保留（仅 SourceRepo 使用）。
+
+2. **环境自检分支**（`Services/EnvironmentCheck.cs`）：
+   - 新增 `FindDshPath()`（`FindOnPath("dsh.cmd") ?? FindOnPath("dsh.exe") ?? FindOnPath("dsh")`，全局装于 `%APPDATA%\npm\dsh.cmd`）；
+   - `CheckAsync` 按来源分支：
+     - **SourceRepo**：现状不变（仓库存在 → node → 版本 + dist 软提示）；
+     - **GlobalCommand**：`dsh` 存在（缺失 → 指引 `npm install -g @deepseek-ai/dsh` + npm 链接）→ node 存在 → 版本；**不检查 RepoPath / dist**（全局包自带前端）。
+
+3. **启动与参数拼装**（`Services/DshProcessManager.cs`）：
+   - `LauncherInfo` 增加 `WorkingDirectory` 字段：
+     - SourceRepo → `settings.RepoPath`；
+     - GlobalCommand → 中性目录（用户主目录或程序目录，`dsh web` 不依赖 cwd）；
+   - `ResolveLauncher` 分支：
+     - SourceRepo → 现状（pnpm → node 直启 `bin.ts`）；
+     - GlobalCommand → `dsh web {portArgs}`；
+   - 0.0.0.0 的 `--patch` 前置逻辑**两模式一致**（同一 CLI），无需区分；
+   - `StartAsync`：dist 软检查仅 SourceRepo；其余（端口探测/就绪/停止/复用/补丁联动）与来源无关，零改动。
+
+4. **设置 UI**（`MainWindow.xaml` + `ViewModels/MainViewModel.cs`）：
+   - 「dsh 来源」互斥单选（源码仓库 / 全局命令）；
+   - 选「全局命令」时：仓库路径输入框 + 浏览按钮禁用，提示"需已执行 `npm install -g @deepseek-ai/dsh`"；
+   - `DshSource` 纳入 AutoSave 自动保存与「恢复默认」；
+   - VM 暴露 `IsSourceRepo` / `IsGlobalCommand` 布尔属性驱动禁用。
+
+5. **文档**（`README.md`）：两种模式前置条件与切换说明。
+
+### 关键保证（无需改动）
+
+- 两种来源共用同一 `$DSH_HOME/profiles/web` → 会话/工作区/API Key 完全互通，切模式不丢数据；
+- 端口复用检测、就绪、停止/重启、托盘、自动更新、0.0.0.0 局域网共享均与来源无关。
+
+### 涉及文件
+
+- `Services/AppSettings.cs`（枚举 + 字段）
+- `Services/EnvironmentCheck.cs`（`FindDshPath` + 分支自检 + 新指引文案）
+- `Services/DshProcessManager.cs`（`LauncherInfo.WorkingDirectory` + `ResolveLauncher` 分支）
+- `ViewModels/MainViewModel.cs`（`IsSourceRepo`/`IsGlobalCommand`、AutoSave/Reset 接入）
+- `MainWindow.xaml`（单选组 + 仓库路径禁用）
+- `README.md`
+
+### 验收标准
+
+1. 选「全局命令」且 `dsh` 在 PATH → 启动成功（不依赖仓库路径/dist），就绪/停止/复用正常；
+2. 选「全局命令」但未装 `dsh` → 自检给出 `npm install -g @deepseek-ai/dsh` 指引（带链接），不崩溃；
+3. 选「源码仓库」→ 行为与现在完全一致；
+4. 两种来源切换后，`$DSH_HOME` 会话/工作区互通；
+5. 0.0.0.0 局域网共享在两种来源下行为一致。
+
+### 待确认点
+
+- 全局命令模式下 `dsh` 缺失时，是否自动执行 `npm install -g @deepseek-ai/dsh`（一键安装，需确认是否引入该交互）或仅给指引；
+- 全局 `dsh` 版本落后于源码（当前 npm latest `0.1.1-rc.2`）——是否需要显示"dsh 来源"对应的版本信息。
+
+---
+
 ## 实现进度
 
 - ✅ T1（关闭行为设置）— 已实现于 v0.2.0
@@ -351,3 +419,4 @@
 - ✅ T5（标题版本显示 + 更新高亮点击）— 已实现于 v0.3.0（方案 A：自定义标题栏）
 - ✅ T6（打开软件时同时启动 dsh）— 已实现于 v0.3.0
 - ✅ T7（绑定主机 0.0.0.0 自动补丁挂载）— 已实现于 v0.4.0
+- ⬜ T8（dsh 来源设置：源码 / 全局命令）— 待实现
