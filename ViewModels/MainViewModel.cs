@@ -52,6 +52,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private string _extraArgs;
     private DshSource _dshSource;
     private bool _autoOpenBrowser;
+    private OpenMode _openMode;
     private CloseAction _closeAction;
     private bool _promptOnClose;
     private bool _startWithWindows;
@@ -87,6 +88,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         _extraArgs = s.ExtraArgs;
         _dshSource = s.DshSource;
         _autoOpenBrowser = s.AutoOpenBrowser;
+        _openMode = s.OpenMode;
         _closeAction = s.CloseAction;
         _promptOnClose = s.PromptOnClose;
         _startWithWindows = s.StartWithWindows;
@@ -296,6 +298,35 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
     /// <summary>即时保存项：改动立即落盘。</summary>
     public bool AutoOpenBrowser { get => _autoOpenBrowser; set { _autoOpenBrowser = value; OnPropertyChanged(); AutoSaveOnChange(); } }
+
+    /// <summary>打开方式（浏览器标签页 / Edge 应用窗口），改动立即保存。</summary>
+    public OpenMode OpenMode
+    {
+        get => _openMode;
+        set
+        {
+            if (_openMode == value) return;
+            _openMode = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(IsBrowserTab));
+            OnPropertyChanged(nameof(IsEdgeApp));
+            AutoSaveOnChange();
+        }
+    }
+
+    /// <summary>互斥单选：浏览器标签页。</summary>
+    public bool IsBrowserTab
+    {
+        get => _openMode == OpenMode.BrowserTab;
+        set { if (value) OpenMode = OpenMode.BrowserTab; }
+    }
+
+    /// <summary>互斥单选：Edge 应用窗口。</summary>
+    public bool IsEdgeApp
+    {
+        get => _openMode == OpenMode.EdgeApp;
+        set { if (value) OpenMode = OpenMode.EdgeApp; }
+    }
 
     /// <summary>关闭主界面时的行为（互斥单选）。</summary>
     public CloseAction CloseAction
@@ -546,8 +577,13 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         if (string.IsNullOrEmpty(target)) return;
         try
         {
-            // UIA 探测（含最小化窗口恢复等待）放后台线程，避免阻塞 UI
-            await Task.Run(() => BrowserOpener.OpenOrFocus(target));
+            // T2：按「打开方式」路由——Edge 应用窗口（--app=，含复用）或浏览器标签（含切换已有标签）。
+            // UIA 探测（含最小化窗口恢复等待）放后台线程，避免阻塞 UI。
+            await Task.Run(() =>
+            {
+                if (_openMode == OpenMode.EdgeApp) BrowserOpener.OpenAppMode(target);
+                else BrowserOpener.OpenOrFocus(target);
+            });
         }
         catch (Exception ex)
         {
@@ -607,6 +643,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         s.ExtraArgs = _extraArgs.Trim();
         s.DshSource = _dshSource;
         s.AutoOpenBrowser = _autoOpenBrowser;
+        s.OpenMode = _openMode;
         s.CloseAction = _closeAction;
         s.PromptOnClose = _promptOnClose;
         s.StartWithWindows = _startWithWindows;
@@ -661,6 +698,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             ExtraArgs = s.ExtraArgs;
             DshSource = s.DshSource;
             AutoOpenBrowser = s.AutoOpenBrowser;
+            OpenMode = s.OpenMode;
             CloseAction = s.CloseAction;
             PromptOnClose = s.PromptOnClose;
             StartWithWindows = s.StartWithWindows;

@@ -20,6 +20,16 @@ public enum DshSource
     GlobalCommand,
 }
 
+/// <summary>打开方式（T2）。</summary>
+public enum OpenMode
+{
+    /// <summary>浏览器标签页（默认；已打开时切换已有标签）。</summary>
+    BrowserTab,
+
+    /// <summary>Edge 应用窗口（--app=，独立无地址栏；已打开时聚焦复用）。</summary>
+    EdgeApp,
+}
+
 /// <summary>应用设置模型（与 settings.json 一一对应）。</summary>
 public sealed class AppSettings
 {
@@ -40,6 +50,9 @@ public sealed class AppSettings
 
     /// <summary>就绪后自动打开浏览器。</summary>
     public bool AutoOpenBrowser { get; set; } = true;
+
+    /// <summary>打开方式（浏览器标签页 / Edge 应用窗口）。</summary>
+    public OpenMode OpenMode { get; set; } = OpenMode.BrowserTab;
 
     /// <summary>关闭主界面时的行为（退出程序 / 最小化到托盘）。</summary>
     public CloseAction CloseAction { get; set; } = CloseAction.MinimizeToTray;

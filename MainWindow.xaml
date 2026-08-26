@@ -296,6 +296,12 @@
 
                         <CheckBox Content="服务就绪后自动打开浏览器" IsChecked="{Binding AutoOpenBrowser}" Margin="0,2,0,10" />
 
+                        <TextBlock Text="打开方式" FontWeight="SemiBold" Margin="0,2,0,2" />
+                        <RadioButton Content="浏览器标签页（已打开时切换已有标签）" GroupName="OpenMode" IsChecked="{Binding IsBrowserTab}"
+                                     Margin="6,2,0,2" />
+                        <RadioButton Content="Edge 应用窗口（--app=，独立无地址栏）" GroupName="OpenMode" IsChecked="{Binding IsEdgeApp}"
+                                     Margin="6,2,0,10" />
+
                         <TextBlock Text="关闭主界面时" FontWeight="SemiBold" Margin="0,2,0,2" />
                         <RadioButton Content="退出程序" GroupName="CloseAction" IsChecked="{Binding CloseActionIsExit}"
                                      Margin="6,2,0,2" />
