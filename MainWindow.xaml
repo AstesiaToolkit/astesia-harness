@@ -180,7 +180,7 @@
                 <!-- T7：局域网地址（每个地址独立一行：绿色链接 + 叠纸复制按钮） -->
                 <StackPanel Margin="18,4,0,0"
                             Visibility="{Binding HasLanUrl, Converter={StaticResource BoolToVis}}">
-                    <TextBlock Text="局域网地址：" FontSize="11" Foreground="#777" Margin="0,0,0,2" />
+                    <!-- <TextBlock Text="局域网地址：" FontSize="11" Foreground="#777" Margin="0,0,0,2" /> -->
                     <ItemsControl ItemsSource="{Binding LanAddresses}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
