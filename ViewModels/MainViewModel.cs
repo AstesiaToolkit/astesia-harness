@@ -379,14 +379,12 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         new HostOption("0.0.0.0（局域网共享）", "0.0.0.0"),
     };
 
-    // ── 局域网地址（T7，从就绪行 LAN 部分解析） ─────────────────────
+    // ── 局域网地址（T7：每个地址独立一行，自带打开/复制命令） ───────
 
-    private string? _lanUrl;
+    /// <summary>局域网访问地址列表（过滤虚拟网卡后的真实 IP；每个地址独立可点/可复制）。</summary>
+    public ObservableCollection<LanAddressItem> LanAddresses { get; } = new();
 
-    /// <summary>局域网访问地址（如 http://192.168.1.5:3080），未解析时为空。</summary>
-    public string? LanUrlText => _lanUrl;
-
-    public bool HasLanUrl => _lanUrl is not null;
+    public bool HasLanUrl => LanAddresses.Count > 0;
 
     // ── 命令 ────────────────────────────────────────────────────────
 
@@ -489,24 +487,43 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         _ui.Post(_ =>
         {
             if (_isExiting) return;
-            _lanUrl = ComposeLanDisplay(url);
-            OnPropertyChanged(nameof(LanUrlText));
-            OnPropertyChanged(nameof(HasLanUrl));
+            RefreshLanAddresses(url);
         }, null);
 
-    /// <summary>
-    /// 组合局域网显示地址：优先用本机解析并过滤虚拟网卡后的真实 IP（可多个，逗号分隔）；
-    /// 无解析结果时回退 DSH 日志里的地址。
-    /// </summary>
-    private string? ComposeLanDisplay(string? logLanUrl)
+    /// <summary>重建局域网地址列表：优先本机解析并过滤虚拟网卡后的真实 IP（可多个）；
+    /// 无解析结果时回退 DSH 日志里的地址。</summary>
+    private void RefreshLanAddresses(string? logLanUrl)
     {
+        LanAddresses.Clear();
         var port = int.TryParse(_portText, out var p) && p is > 0 and <= 65535 ? p : _settings.Current.Port;
         var resolved = LanAddressResolver.ResolveLanAddresses();
-        if (resolved.Count > 0)
+        IEnumerable<string> urls = resolved.Count > 0
+            ? resolved.Select(ip => $"http://{ip}:{port}")
+            : string.IsNullOrEmpty(logLanUrl) ? Enumerable.Empty<string>() : new[] { logLanUrl };
+
+        foreach (var u in urls)
         {
-            return string.Join(" · ", resolved.Select(ip => $"http://{ip}:{port}"));
+            LanAddresses.Add(new LanAddressItem(u, () => OpenLanUrl(u), () => CopyLanUrl(u)));
         }
-        return logLanUrl;
+        OnPropertyChanged(nameof(HasLanUrl));
+    }
+
+    private void OpenLanUrl(string url)
+    {
+        try
+        {
+            BrowserOpener.Open(url);
+        }
+        catch (Exception ex)
+        {
+            ShowMessage(ex.Message, isError: true);
+        }
+    }
+
+    private void CopyLanUrl(string url)
+    {
+        Clipboard.SetText(url);
+        ShowMessage($"已复制局域网地址：{url}");
     }
 
     // ── 动作 ────────────────────────────────────────────────────────
@@ -1017,4 +1034,21 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public event PropertyChangedEventHandler? PropertyChanged;
 
     private void OnPropertyChanged([CallerMemberName] string? name = null) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+}
+
+/// <summary>局域网地址项：地址文本 + 各自的打开/复制命令（每地址独立一行绑定）。</summary>
+public sealed class LanAddressItem
+{
+    public LanAddressItem(string url, Action open, Action copy)
+    {
+        Url = url;
+        OpenCommand = new RelayCommand(open);
+        CopyCommand = new RelayCommand(copy);
+    }
+
+    public string Url { get; }
+
+    public RelayCommand OpenCommand { get; }
+
+    public RelayCommand CopyCommand { get; }
 }
