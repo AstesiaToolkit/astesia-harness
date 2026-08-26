@@ -70,7 +70,22 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $notes = @"
+          # 从 CHANGELOG.md 提取当前版本（vX.Y.Z → X.Y.Z）的小节作为 Release 正文；
+          # 缺失时回退通用说明。发版前记得更新 CHANGELOG.md。
+          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          $pattern = '^##\s*\[?' + [regex]::Escape($version) + '\]?'
+          $notes = ""
+          $inSection = $false
+          foreach ($line in Get-Content -LiteralPath 'CHANGELOG.md') {
+            if ($line -match '^##\s') {
+              if ($line -match $pattern) { $inSection = $true; continue }
+              else { $inSection = $false }
+            }
+            if ($inSection) { $notes += $line + "`n" }
+          }
+          $notes = $notes.Trim()
+          if (-not $notes) {
+            $notes = @"
           AstesiaHarness $env:GITHUB_REF_NAME 自动构建版。
 
           ## 下载哪个？
@@ -85,10 +100,13 @@ jobs:
           - https://github.com/AstesiaToolkit/astesia-harness
           - 文档：docs/（需求分析、架构设计、UI 规格）
           "@
+          }
+          $notes | Set-Content -LiteralPath 'notes.md' -Encoding UTF8
+
           gh release create $env:GITHUB_REF_NAME `
             publish\AstesiaHarness.exe `
             publish\AstesiaHarness.exe.sha256 `
             publish\AstesiaHarness-SelfContained.exe `
             publish\AstesiaHarness-SelfContained.exe.sha256 `
             --title "AstesiaHarness $env:GITHUB_REF_NAME" `
-            --notes $notes
+            --notes-file notes.md

@@ -8,7 +8,8 @@
 
 - [ ] 工作树干净（`git status` 无未提交改动）
 - [ ] `AstesiaHarness.csproj` 的 `<Version>` 已设为本次版本号（v0.6.0）
-- [ ] 本地构建通过：`dotnet build` → 0 警告 0 错误
+- [ ] **`CHANGELOG.md` 已新增本次版本小节**（标题 `## [0.6.0] - 日期`，含新增/改进/修复；Release 正文由 workflow 自动提取该小节）
+- [ ] 本地构建通过：`dotnet build` → 0 警告 0 错误（注意：应用运行中构建会报 MSB3021 文件占用，先关掉实例）
 - [ ] 所有相关提交已落地本地 main
 - [ ] README / docs/TODO.md 与本版内容一致
 
@@ -41,23 +42,16 @@ git push origin v0.6.0     # 触发 GitHub Actions → 自动构建双附件并�
 | 9 | 回归：自动更新入口 | 设置→检查更新 | 无更新提示"已是最新"；有新版本弹确认并可更新 |
 | 10 | 自动更新链路（关键） | 用 v0.5.0 旧版 exe 运行 → 检查更新 | 提示 v0.6.0 → 更新 → 下载正确变体 → 校验 → 重启为 0.6.0 |
 
-## 4. GitHub Release 发布说明（发布后粘贴到 Release 页，或改 workflow `--notes`）
+## 4. GitHub Release 发布说明
+
+> **v0.6.0 起：Release 正文由 workflow 自动从 `CHANGELOG.md` 提取**（`## [0.6.0]` 小节），无需手工粘贴。
+> 若提取为空（小节缺失），回退为 workflow 内的通用说明。
+> 历史模板（可并入 CHANGELOG 小节，按需保留）：
 
 ```markdown
 ## 下载哪个？
 - **AstesiaHarness.exe**（约 1.3 MB）：默认推荐，需安装 .NET 8 Desktop Runtime（https://dotnet.microsoft.com/download/dotnet/8.0/runtime）
 - **AstesiaHarness-SelfContained.exe**（约 60 MB）：免依赖版，Windows 10/11 x64 双击即用
-
-## v0.6.0 更新内容
-### 新增
-- **Edge 应用窗口打开方式**：设置→打开方式可选「浏览器标签页 / Edge 应用窗口」；应用窗口为独立无地址栏形态（`--app=`），已打开时自动聚焦复用不重复开窗；未安装 Edge 自动回退浏览器
-- **局域网地址每地址独立行**：每个局域网地址独立一行，绿色链接点击在浏览器打开该地址 + 叠纸图标复制按钮；URL 行复制按钮统一为叠纸图标
-
-### 改进
-- 浏览器窗口枚举改为全量（EnumWindows）：多浏览器窗口场景下也能正确定位/切换已有标签页
-
-### 其他
-- dsh 来源设置（源码仓库 / 全局命令）随 v0.5.0 发布，本版延续
 
 ## 使用提示
 - 首次使用请到「设置」确认 dsh 来源与仓库路径
