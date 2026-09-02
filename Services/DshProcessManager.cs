@@ -509,14 +509,16 @@ public sealed class DshProcessManager : IDisposable
         // 启动器解析到第一个不认识的 token（--port）就停止解析自家选项，之后的 --patch 会被当成 web app 参数，
         // 由 web-startup 解析时报 "unknown option --patch"。
         string portArgs;
+        // 总是传 --no-open：新版 dsh web 会自动用默认浏览器打开，与启动器按设置的开浏览器逻辑冲突（双窗口）；
+        // 由启动器统一接管打开（AutoOpenBrowser + 打开方式），DSH 自身不再开。
         if (settings.Host == "0.0.0.0")
         {
             var stripped = StripHostArgs(extra);
-            portArgs = $"--patch \"{SettingsStore.LanYmlPath}\" --port {settings.Port}{stripped}";
+            portArgs = $"--patch \"{SettingsStore.LanYmlPath}\" --no-open --port {settings.Port}{stripped}";
         }
         else
         {
-            portArgs = $"--port {settings.Port} --host {settings.Host}{extra}";
+            portArgs = $"--no-open --port {settings.Port} --host {settings.Host}{extra}";
         }
 
         // T8：工作目录按来源——源码用仓库目录；全局命令用中性目录（dsh web 不依赖 cwd）。
